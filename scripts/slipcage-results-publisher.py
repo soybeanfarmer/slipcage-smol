@@ -29,7 +29,7 @@ SHA40 = re.compile(r"[a-f0-9]{40}\Z")
 SHA64 = re.compile(r"[a-f0-9]{64}\Z")
 ALLOWED = {"schema_version", "experiment_id", "approved_release_sha",
            "manifest_sha256", "runner", "status", "outcome",
-           "claimed_utc", "finished_utc", "run_dir", "failure_type"}
+           "claimed_utc", "finished_utc", "run_dir", "failure_type", "cycles"}
 OUTCOMES = {"passed": {"known_answers_verified"},
             "failed": {"missing_or_failed_fixed_guest_evidence",
                        "runner_exception"}}
@@ -66,12 +66,14 @@ def sanitize(value, filename):
     digest = value.get("manifest_sha256")
     status = value.get("status")
     outcome = value.get("outcome")
+    cycles = value.get("cycles", 1)
     if (type(value.get("schema_version")) is not int
             or value["schema_version"] != 1
             or not isinstance(ident, str) or not re.fullmatch(r"EXP-[0-9]{4}", ident)
             or not isinstance(rev, str) or not SHA40.fullmatch(rev)
             or not isinstance(digest, str) or not SHA64.fullmatch(digest)
             or value.get("runner") != RUNNER
+            or type(cycles) is not int or not 1 <= cycles <= 3
             or status not in OUTCOMES or outcome not in OUTCOMES[status]):
         raise PublishError("Unrecognized completed result")
     key = hashlib.sha256((ident + ":" + rev + ":" + digest).encode("ascii")).hexdigest()
@@ -83,7 +85,7 @@ def sanitize(value, filename):
     return {
         "schema_version": 1, "experiment_id": ident,
         "approved_release_sha": rev, "manifest_sha256": digest,
-        "runner": RUNNER, "status": status, "outcome": outcome,
+        "runner": RUNNER, "cycles": cycles, "status": status, "outcome": outcome,
         "claimed_utc": started, "finished_utc": ended,
         "evidence": "self-reported fixed guest result; requires human review",
     }
