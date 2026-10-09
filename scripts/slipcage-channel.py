@@ -50,7 +50,7 @@ def require_pristine(blockers=BLOCKERS) -> None:
 def require_enrolled(marker: Path = MARKER, *, expected_uid: int = 0) -> None:
     """Root-owned, regular, private and exact-channel identity only."""
     parent_info = marker.parent.lstat()
-    if not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid != expected_uid:
+    if (not stat.S_ISDIR(parent_info.st_mode) or\n            parent_info.st_uid != expected_uid or\n            stat.S_IMODE(parent_info.st_mode) != 0o700):
         raise ValueError("Unsafe smol channel configuration directory")
     fd = os.open(marker, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
     with os.fdopen(fd, "rb") as stream:
