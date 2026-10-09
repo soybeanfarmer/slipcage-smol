@@ -53,5 +53,19 @@ jobs:
           printf '%s\n' "$contents" | grep -Fx init
           printf '%s\n' "$contents" | grep -Fx dev/console
           gzip -dc /usr/local/lib/slipcage/experiment-v1.cpio.gz | cpio -i --to-stdout init | sh -n
+      - name: Build and inspect fixed resource-observation guest without booting
+        run: |
+          sudo bash scripts/build-resource-observation-guest.sh
+          gzip -t /usr/local/lib/slipcage/resource-v1.cpio.gz
+          contents="$(gzip -dc /usr/local/lib/slipcage/resource-v1.cpio.gz | cpio -it 2>/dev/null)"
+          printf '%s\n' "$contents" | grep -Fx init
+          printf '%s\n' "$contents" | grep -Fx dev/console
+          printf '%s\n' "$contents" | grep -Fx tmp
+          gzip -dc /usr/local/lib/slipcage/resource-v1.cpio.gz | cpio -i --to-stdout init | sh -n
+          init_text="$(gzip -dc /usr/local/lib/slipcage/resource-v1.cpio.gz | cpio -i --to-stdout init)"
+          printf '%s\n' "$init_text" | grep -F 'count=32'
+          printf '%s\n' "$init_text" | grep -F 'SLIPCAGE_RESOURCE_V1_OK'
+          ! printf '%s\n' "$init_text" | grep -E 'curl|wget|/dev/tcp'
+
       - name: Validate Ansible syntax
         run: ansible-playbook -i inventory/hosts.ini.example playbooks/site.yml --syntax-check
