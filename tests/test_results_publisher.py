@@ -120,7 +120,7 @@ class PublisherTests(unittest.TestCase):
         self.result_file.write_text(json.dumps(self.record), encoding="utf-8")
         self.result_file.chmod(0o600)
 
-    def run(self, *, submit=False, api=None):
+    def invoke(self, *, submit=False, api=None):
         return publisher.run(source=self.source, state=self.state,
                              owner=self.owner, submit=submit, api=api)
 
@@ -137,12 +137,12 @@ class PublisherTests(unittest.TestCase):
         self.assertNotIn("/var/lib", serialized)
         self.assertNotIn("SecretFailureType", serialized)
         self.assertLess(len(serialized), 2048)
-        self.assertEqual(self.run()["status"], "dry_run")
+        self.assertEqual(self.invoke()["status"], "dry_run")
 
     def test_dry_run_never_loads_a_credential_or_contacts_api(self):
         with patch.object(publisher, "credential",
                           side_effect=AssertionError("read token")):
-            result = self.run()
+            result = self.invoke()
         self.assertEqual(result["status"], "dry_run")
         self.assertFalse((self.state / self.result_file.name).exists())
 
@@ -161,7 +161,7 @@ class PublisherTests(unittest.TestCase):
                 changed = {**self.record, **change}
                 self.result_file.write_text(json.dumps(changed))
                 with self.assertRaises(publisher.PublishError):
-                    self.run()
+                    self.invoke()
         self.assertFalse((self.state / self.result_file.name).exists())
 
     def test_unreadable_or_symlinked_source_never_sent(self):
@@ -170,12 +170,12 @@ class PublisherTests(unittest.TestCase):
         self.result_file.unlink()
         self.result_file.symlink_to(dest)
         with self.assertRaises(OSError):
-            self.run()
+            self.invoke()
         self.result_file.unlink()
         self.save_source()
         self.result_file.chmod(0o644)
         with self.assertRaises(publisher.PublishError):
-            self.run()
+            self.invoke()
         self.assertFalse((self.state / self.result_file.name).exists())
 
     def test_claimed_record_skipped_until_completed(self):
@@ -183,12 +183,12 @@ class PublisherTests(unittest.TestCase):
         self.record.pop("finished_utc")
         self.record.pop("outcome")
         self.save_source()
-        self.assertEqual(self.run()["status"], "idle")
+        self.assertEqual(self.invoke()["status"], "idle")
 
     def test_create_draft_pr_once_and_persist_private_receipt(self):
         fake = FakeGitHub()
         fake.expected = publisher.sanitize(self.record, self.result_file.name)
-        result = self.run(submit=True, api=fake)
+        result = self.invoke(submit=True, api=fake)
         self.assertEqual(result["status"], "submitted")
         self.assertEqual(result["pull_request"],
                          "https://github.com/soybeanfarmer/slipcage-smol/pull/17")
@@ -197,32 +197,32 @@ class PublisherTests(unittest.TestCase):
         receipt = self.state / self.result_file.name
         self.assertTrue(receipt.is_file())
         self.assertEqual(stat.S_IMODE(receipt.stat().st_mode), 0o600)
-        self.assertEqual(self.run(submit=True, api=fake)["status"], "idle")
+        self.assertEqual(self.invoke(submit=True, api=fake)["status"], "idle")
         self.assertEqual(len(fake.posts), 4)
 
     def test_resume_after_branch_creation_and_avoid_duplicate_pr(self):
         fake = FakeGitHub(prior_branch=True)
         fake.expected = publisher.sanitize(self.record, self.result_file.name)
-        self.assertEqual(self.run(submit=True, api=fake)["status"], "submitted")
+        self.assertEqual(self.invoke(submit=True, api=fake)["status"], "submitted")
         self.assertEqual([v[0] for v in fake.posts], ["/pulls"])
 
     def test_resume_after_pr_created_but_before_receipt(self):
         fake = FakeGitHub(prior_branch=True, prior_pr=True)
         fake.expected = publisher.sanitize(self.record, self.result_file.name)
-        self.assertEqual(self.run(submit=True, api=fake)["status"], "submitted")
+        self.assertEqual(self.invoke(submit=True, api=fake)["status"], "submitted")
         self.assertEqual(fake.posts, [])
 
     def test_existing_merged_result_is_already_done(self):
         fake = FakeGitHub(already_merged=True)
         fake.expected = publisher.sanitize(self.record, self.result_file.name)
-        self.assertEqual(self.run(submit=True, api=fake)["status"], "already_merged")
+        self.assertEqual(self.invoke(submit=True, api=fake)["status"], "already_merged")
         self.assertEqual(fake.posts, [])
 
     def test_closed_unmerged_pr_requires_operator_intervention(self):
         fake = FakeGitHub(prior_branch=True, closed_pr=True)
         fake.expected = publisher.sanitize(self.record, self.result_file.name)
         with self.assertRaises(publisher.PublishError):
-            self.run(submit=True, api=fake)
+            self.invoke(submit=True, api=fake)
         self.assertFalse((self.state / self.result_file.name).exists())
 
     def test_no_git_write_if_upload_fails(self):
@@ -232,7 +232,7 @@ class PublisherTests(unittest.TestCase):
             raise publisher.PublishError("HTTP 403")
         fake.post = fail
         with self.assertRaises(publisher.PublishError):
-            self.run(submit=True, api=fake)
+            self.invoke(submit=True, api=fake)
         self.assertFalse((self.state / self.result_file.name).exists())
 
     def test_git_blob_sha_stable(self):
