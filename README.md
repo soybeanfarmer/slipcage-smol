@@ -63,6 +63,17 @@ For specific v0.10 operations, consult
 Historical documentation is preserved for context but may contain
 future-tense instructions from older versions.
 
+## QEMU/KVM research without another orchestrator
+
+The six-hour systemd discovery job still gathers both hypervisor and
+container-runtime advisories. An operator can also perform a bounded
+NVD QEMU/KVM **publication-date** backfill with `backfill-qemu` and
+list up to 25 ranked metadata leads with `qemu-leads`. Both use the
+existing research SQLite database; no additional GitHub Actions research
+runner, Dagu job or web dashboard is involved. See
+[QEMU/KVM research instructions](docs/QEMU_RESEARCH.md). These leads
+are not evidence of a reproduced or newly discovered vulnerability.
+
 ## Safe local development
 
 Work on a fresh branch and use small pull requests. Python's tests are
