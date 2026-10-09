@@ -1,7 +1,6 @@
-"""Offline tests: KVM capability checks, disposable boot design and offsite opt-in."""
+"""Offline tests: KVM capability checks and disposable benign boot design."""
 import importlib.util
 from pathlib import Path
-import subprocess
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -127,21 +126,29 @@ class ReadinessTests(unittest.TestCase):
             (ROOT / "systemd" / "slipcage-kvm-boot.service").read_text().count(
                 "ExecStart="), 1)
 
-    def test_offsite_uses_remote_repo_and_timer_is_not_enabled_by_playbook(self):
-        service = (ROOT / "systemd" / "slipcage-offsite-backup.service").read_text()
+    def test_removed_offsite_integration_is_not_installed(self):
+        """Restic must not be installed by fresh-smol Ansible deployments."""
         playbook = (ROOT / "playbooks" / "site.yml").read_text()
-        script = ROOT / "scripts" / "slipcage-offsite-backup.sh"
-        self.assertIn("ConditionPathExists=/etc/slipcage/offsite.env", service)
-        self.assertIn("EnvironmentFile=/etc/slipcage/offsite.env", service)
-        self.assertNotIn("enabled: true", playbook.split(
-            "- name: Install disabled-by-default encrypted backup timer")[1].split(
-            "- name: Release deployment maintenance")[0])
-        process = subprocess.run(["bash", str(script)], capture_output=True,
-                                  text=True, env={"RESTIC_REPOSITORY": "/tmp/not-remote",
-                                                  "RESTIC_PASSWORD_FILE": "/tmp/fake"},
-                                  timeout=5)
-        self.assertNotEqual(process.returncode, 0)
-        self.assertIn("Refusing local", process.stderr)
+        self.assertNotIn("slipcage-offsite-backup", playbook)
+        self.assertNotIn("          - restic", playbook)
+        self.assertFalse((ROOT / "scripts" / "slipcage-offsite-backup.sh").exists())
+        for name in ("slipcage-offsite-backup.service",
+                     "slipcage-offsite-backup.timer"):
+            self.assertFalse((ROOT / "systemd" / name).exists())
+
+        # The private config directory MUST stay: the fresh-host smol
+        # release-channel marker lives inside /etc/slipcage.
+        self.assertIn("path: /etc/slipcage", playbook)
+        self.assertIn("Protect private smol release-channel", playbook)
+
+    def test_local_backup_and_weekly_restore_assurance_stay_enabled(self):
+        playbook = (ROOT / "playbooks" / "site.yml").read_text()
+        for name in ("slipcage-backup.py", "slipcage-restore-check.py",
+                     "slipcage-assurance.py", "slipcage-assurance.timer",
+                     "slipcage-backup.timer"):
+            self.assertIn(name, playbook)
+        self.assertIn("Enable scheduled Slipcage backups", playbook)
+        self.assertIn("Enable bounded weekly local backup assurance", playbook)
 
     def test_microguest_init_has_no_external_payload(self):
         source = (ROOT / "scripts" / "build-microguest.sh").read_text()
