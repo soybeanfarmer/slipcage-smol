@@ -1,4 +1,4 @@
-name: Approve Slipcage Release
+name: Approve Slipcage-smol Release
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: slipcage-release
+  group: slipcage-smol-release
   cancel-in-progress: false
 
 jobs:
@@ -47,4 +47,4 @@ jobs:
         run: |
           gh release create "$RELEASE_TAG" --target "$RELEASE_SHA" \
             --title "$RELEASE_TAG" \
-            --notes "Approved Slipcage release $RELEASE_TAG. Deployment is pulled by the ServaRica systemd timer after GitHub CI verification."
+            --notes "Approved Slipcage-smol release $RELEASE_TAG. Only a separately bootstrapped smol host may pull this release after CI validation."

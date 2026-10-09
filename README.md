@@ -14,9 +14,10 @@ its Git file tree exactly matches original v0.10.0 commit `f356d83`.
 We are simplifying deliberately, beginning with the documentation and
 component audit, before considering behavior changes.
 
-**Current status:** GitHub source and CI baseline only. The existing VPS
-deployment still follows the **original** `soybeanfarmer/slipcage`
-repository. No smol release has been deployed to the VPS.
+**Current status:** GitHub source and CI baseline only. The original
+VPS still follows `soybeanfarmer/slipcage`. Smol now has a separate
+release origin and fresh-host-only enrollment guard, but **has not been
+deployed to any VPS**.
 
 ## What the reviewed v0.10 baseline does
 
@@ -75,20 +76,23 @@ bash -n scripts/*.sh
 GitHub CI also validates Ansible/YAML syntax and **builds but never boots**
 the inert test initramfs. Review CI results before merging.
 
-### Warning: fork deployment is **not** configured
+### Independent release channel — **fresh host only**
 
-The copied `scripts/pull-deploy.sh` intentionally remains unchanged and
-still targets **`soybeanfarmer/slipcage`**, with the original GitHub
-release approval checks and server directory layout. The bootstrap
-script installs that deployer. **Do not run** `bootstrap-pull.sh`,
-`playbooks/site.yml`, or a smol release workflow against the current
-production VPS to switch repositories.
+The smol deployer now targets **`soybeanfarmer/slipcage-smol`**,
+requires a root-private smol ownership marker, and accepts only
+manually approved smol releases on `main` with successful CI.
+The bootstrap refuses an existing Slipcage installation, and Ansible
+checks the marker before changing anything.
 
-Migrating production to smol requires a *separate* reviewed plan for
-deployment origin, verified release ancestry, existing data/backups,
-service ownership, rollback and explicit operator approval.
-Until then, the current VPS continues to use the known working
-original-repository release; smol is a source workspace only.
+**Do not run** the smol bootstrap, Ansible playbook, or release
+promotion to migrate the original production VPS. Same-named systemd
+services and data paths still exist, so a side-by-side installation
+or in-place migration is not supported by this PR. No current VPS
+has been changed; an independent installation requires a *separate,
+fresh* Ubuntu 24.04 VPS, its own host validation, and operator approval.
+
+See [Independent smol deployment](docs/SMOL_DEPLOYMENT.md) for the
+refusal gates and future separate-host procedure.
 
 ## Design guardrails
 
