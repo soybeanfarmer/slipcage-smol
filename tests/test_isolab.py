@@ -3,7 +3,6 @@ from pathlib import Path
 import tempfile
 import sys
 import unittest
-from unittest.mock import patch
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / 'app' / 'isolab.py'
 sys.path.insert(0, str(MODULE_PATH.parent))
@@ -34,22 +33,6 @@ class LabTests(unittest.TestCase):
             self.assertIn('No vulnerability has been reproduced', output)
             self.assertNotIn('<test>', output)
             self.assertEqual(isolab.connect(db).execute('SELECT status FROM candidates').fetchone()[0], 'reviewed')
-
-    def test_queue_uses_only_opaque_ids_and_no_shell(self):
-        with tempfile.TemporaryDirectory() as d:
-            db = str(Path(d)/'research.db')
-            conn = isolab.connect(db)
-            isolab.record(conn, dict(source='nvd', source_id='CVE-2026-0001', title='runc escape',
-                                     summary='runc bug', url='https://nvd.nist.gov/'))
-            conn.commit()
-            with patch.object(isolab.subprocess, 'run') as sub:
-                self.assertEqual(isolab.enqueue(db, '/tmp/review-candidate.yaml', 3), 0)
-                cmd = sub.call_args.args[0]
-                self.assertEqual(cmd[0:3], ['/usr/local/bin/dagu','enqueue','/tmp/review-candidate.yaml'])
-                self.assertFalse('shell' in sub.call_args.kwargs)
-                self.assertTrue(cmd[-2].startswith('candidate_id='))
-                self.assertTrue(cmd[-1].startswith('attempt='))
-                self.assertEqual(len(cmd[-1].split('=', 1)[1]), 32)
 
     def test_bad_id_rejected(self):
         with self.assertRaises(ValueError):

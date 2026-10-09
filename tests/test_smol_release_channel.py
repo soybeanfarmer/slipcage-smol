@@ -125,7 +125,7 @@ class SmolChannelTests(unittest.TestCase):
         self.assertIn("soybeanfarmer/slipcage-smol", site)
         self.assertLess(site.index("Require explicit Slipcage-smol bootstrap"),
                         site.index("Enter maintenance and drain guarded research jobs"))
-        self.assertIn("Refuse unsafe unattended migration from unguarded Dagu", site)
+        self.assertIn("Stop legacy Dagu before enabling native timers", site)
 
     def test_release_stays_manual_and_repo_specific(self):
         workflow = (ROOT / ".github/workflows/deploy.yml").read_text()

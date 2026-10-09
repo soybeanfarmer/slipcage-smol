@@ -1,0 +1,11 @@
+[Unit]
+Description=Discover public security advisories every six hours
+
+[Timer]
+OnCalendar=*-*-* 00,06,12,18:17:00 UTC
+RandomizedDelaySec=2min
+Persistent=true
+Unit=slipcage-discover.service
+
+[Install]
+WantedBy=timers.target

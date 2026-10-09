@@ -1,9 +1,4 @@
-"""SQLite-backed, attempt-fenced delivery of metadata-only advisory reviews.
-
-Dagu is a delivery mechanism, not the source of truth for research state.
-A timer retries abandoned work. Obsolete Dagu deliveries are inert because
-the worker must atomically claim its exact opaque attempt token.
-"""
+"""SQLite-backed, attempt-fenced metadata reviews for native systemd workers."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -11,8 +6,6 @@ import os
 import re
 import secrets
 import sqlite3
-import subprocess
-import sys
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS review_attempts (
@@ -119,50 +112,6 @@ def claim_next(conn: sqlite3.Connection, limit: int, now: datetime | None = None
                 """, (row["id"], token, stamp(now), row["attempts"] + 1))
             return row["id"], token
     return None
-
-
-def rollback_delivery(conn, candidate_id: str, token: str,
-                      *, ambiguous: bool = False) -> None:
-    with conn:
-        conn.execute("BEGIN IMMEDIATE")
-        current = conn.execute(
-            "SELECT state,token FROM review_attempts WHERE candidate_id=?",
-            (candidate_id,)).fetchone()
-        if current and current["state"] == "queued" and current["token"] == token:
-            conn.execute("UPDATE candidates SET status='pending',queued_at=NULL "
-                         "WHERE id=? AND status='queued'", (candidate_id,))
-            conn.execute("""UPDATE review_attempts SET state='delivery_failed',
-                attempts=CASE WHEN ? THEN attempts ELSE MAX(0,attempts - 1) END
-                WHERE candidate_id=? AND token=?""",
-                (int(ambiguous), candidate_id, token))
-
-
-def enqueue(conn: sqlite3.Connection, workflow: str, limit: int,
-            *, runner=None, now: datetime | None = None) -> dict:
-    if runner is None:
-        runner = subprocess.run
-    submitted = 0
-    failed = 0
-    while True:
-        claim = claim_next(conn, limit, now)
-        if not claim:
-            break
-        candidate_id, token = claim
-        try:
-            runner(["/usr/local/bin/dagu", "enqueue", workflow, "--",
-                    f"candidate_id={candidate_id}", f"attempt={token}"],
-                   check=True, timeout=20, capture_output=True, text=True)
-            submitted += 1
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
-            # Timeout is ambiguous: Dagu might already have accepted the job.
-            # Definite local/CLI failures must not exhaust the retry budget.
-            rollback_delivery(conn, candidate_id, token,
-                              ambiguous=isinstance(exc, subprocess.TimeoutExpired))
-            failed += 1
-            print(f"WARNING: delivery of {candidate_id[:12]} failed: {exc}", file=sys.stderr)
-            # Avoid rapidly retrying a broken CLI or Dagu outage in the same run.
-            break
-    return {"enqueued": submitted, "delivery_failures": failed}
 
 
 def start(conn: sqlite3.Connection, candidate_id: str, token: str,

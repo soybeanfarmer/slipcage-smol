@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded local review runner; future systemd replacement for Dagu dispatch.
-
-This module is intentionally NOT installed or scheduled by the v0.1.0
-playbook. Dagu remains the sole live dispatcher until a separately reviewed
-cutover has drained its queue and disabled its timers.
-"""
+"""Bounded, attempt-fenced SQLite-native review runner for systemd."""
 from __future__ import annotations
 
 import argparse
