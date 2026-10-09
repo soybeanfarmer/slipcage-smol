@@ -3,7 +3,7 @@
 # No downloaded guest images, guest disk, networking, or arbitrary guest payloads.
 set -Eeuo pipefail
 umask 022
-[[ "$EUID" == 0 ]] || { echo "Root needed to create the console device node" >&2; exit 1; }
+[[ "$EUID" == 0 ]] || { echo "Root needed to create fixed guest device nodes" >&2; exit 1; }
 busybox="$(command -v busybox)"
 [[ -x "$busybox" ]] || { echo "busybox-static is required" >&2; exit 1; }
 command -v cpio >/dev/null || { echo "cpio is required" >&2; exit 1; }
@@ -22,6 +22,8 @@ cp -- "$busybox" "$work/root/bin/busybox"
 chmod 0755 "$work/root/bin/busybox"
 ln -s busybox "$work/root/bin/sh"
 mknod -m 0600 "$work/root/dev/console" c 5 1
+mknod -m 0600 "$work/root/dev/null" c 1 3
+mknod -m 0600 "$work/root/dev/zero" c 1 5
 cat > "$work/root/init" <<'GUEST_INIT'
 #!/bin/sh
 # Fixed 32-MiB zero-buffer touch + SHA-256 verification. No outside inputs.

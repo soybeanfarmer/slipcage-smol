@@ -60,6 +60,8 @@ jobs:
           contents="$(gzip -dc /usr/local/lib/slipcage/resource-v1.cpio.gz | cpio -it 2>/dev/null)"
           printf '%s\n' "$contents" | grep -Fx init
           printf '%s\n' "$contents" | grep -Fx dev/console
+          printf '%s\n' "$contents" | grep -Fx dev/null
+          printf '%s\n' "$contents" | grep -Fx dev/zero
           printf '%s\n' "$contents" | grep -Fx tmp
           gzip -dc /usr/local/lib/slipcage/resource-v1.cpio.gz | cpio -i --to-stdout init | sh -n
           init_text="$(gzip -dc /usr/local/lib/slipcage/resource-v1.cpio.gz | cpio -i --to-stdout init)"
