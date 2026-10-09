@@ -1,0 +1,18 @@
+{
+  "approved_release_sha": "61cb3b97cb8850a6a82ab4f61e35560602491831",
+  "claimed_utc": "2026-10-09T18:58:47+00:00",
+  "evidence": "self-reported fixed guest result; requires human review",
+  "experiment_id": "EXP-0004",
+  "finished_utc": "2026-10-09T18:58:50+00:00",
+  "manifest_sha256": "0cdaf8a15c46764d592d204df08fb0695f09aa8a4706000468d34f6e0d408c99",
+  "outcome": "resource_bounds_verified",
+  "resource_observation": {
+    "cpu_system_seconds": 0.248,
+    "cpu_user_seconds": 2.345,
+    "qemu_peak_rss_kib": 208828,
+    "wall_seconds": 2.612
+  },
+  "runner": "fixed_resource_observation_v1",
+  "schema_version": 1,
+  "status": "passed"
+}
