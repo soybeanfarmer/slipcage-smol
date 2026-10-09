@@ -226,6 +226,11 @@ is required.
 - Deterministic filename ordering selects the next unclaimed item.
   A durable claim **precedes** VM execution. Failed or interrupted jobs
   are not retried automatically; the queue advances to the next item.
+  A completed failed experiment is still a consumed queue item: the
+  worker exits cleanly after recording the failure so the timer can
+  schedule the next manifest. Manifest validation, deployment-guard,
+  or other infrastructure errors still fail the service and require
+  inspection before resuming.
 - An unchanged experiment ID **and identical manifest bytes** do not
   rerun merely because a later release was published. A new manifest
   ID or changed manifest digest counts as new reviewed work. Each

@@ -8,6 +8,9 @@ from pathlib import Path
 import stat
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+import io
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "slipcage-experiment-consumer.py"
@@ -139,6 +142,25 @@ class ExperimentConsumerTests(unittest.TestCase):
         self.assertEqual(self.run_once()["status"], "idle")
         self.assertEqual(self.executions, 2)
         self.assertEqual(len(self.result_files()), 2)
+
+    def test_failed_item_does_not_block_next_approved_item(self):
+        (self.queue / "EXP-0002.json").write_text(
+            json.dumps({**APPROVED, "id": "EXP-0002"}))
+        failed = self.run_once(runner=lambda: {"passed": False})
+        self.assertEqual(failed["status"], "failed")
+        subsequent = self.run_once()
+        self.assertEqual(subsequent["status"], "passed")
+        self.assertEqual(subsequent["experiment_id"], "EXP-0002")
+
+    def test_recorded_failure_exits_cleanly_but_infrastructure_errors_do_not(self):
+        with patch.object(consumer, "consume", return_value={"status": "failed"}):
+            with redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(consumer.main(), 0)
+        self.assertIn('"status": "failed"', output.getvalue())
+        with patch.object(consumer, "consume", side_effect=ValueError("unsafe input")):
+            with redirect_stderr(io.StringIO()) as errors:
+                self.assertEqual(consumer.main(), 2)
+        self.assertIn("ValueError", errors.getvalue())
 
     def test_failure_not_rerun_and_provenance_preserved(self):
         failed = self.run_once(runner=lambda: {"passed": True})
