@@ -1,0 +1,54 @@
+name: QEMU research snapshot (public metadata only)
+
+# Explicit human action only: no timer, deployment, guest boot or target scanning.
+on:
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: "NVD publication window (bounded, UTC days)"
+        type: choice
+        options: ["7", "14", "30"]
+        default: "30"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qemu-public-advisory-snapshot
+  cancel-in-progress: false
+
+jobs:
+  public-metadata:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fetch QEMU/KVM public advisory metadata only
+        env:
+          LOOKBACK_DAYS: ${{ inputs.lookback_days }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$LOOKBACK_DAYS" in 7|14|30) ;; *) echo "Invalid window"; exit 1 ;; esac
+          db="${RUNNER_TEMP}/qemu-public-research.sqlite3"
+          # The existing discovery uses GitHub advisories + a small NVD last-modified window.
+          python3 app/isolab.py sync --db "$db" --focus qemu
+          # Explicit bounded NVD publication-window search of QEMU and KVM keywords.
+          start="$(date -u -d "$((LOOKBACK_DAYS - 1)) days ago" +%F)"
+          end="$(date -u +%F)"
+          python3 app/isolab.py backfill-qemu --db "$db" --start-day "$start" --end-day "$end"
+          python3 app/isolab.py qemu-leads --db "$db" --limit 15 > "${RUNNER_TEMP}/qemu-leads.json"
+          python3 app/isolab.py status --db "$db"
+      - name: Save public metadata research snapshot (no private VPS data)
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-public-research
+          path: |
+            ${{ runner.temp }}/qemu-public-research.sqlite3
+            ${{ runner.temp }}/qemu-leads.json
+          retention-days: 7
+          if-no-files-found: error
