@@ -27,7 +27,7 @@ DEFAULT_PROBE = Path("/usr/local/lib/slipcage/kvm-probe.py")
 DEFAULT_STATE = Path("/var/lib/slipcage-guest")
 MAX_CYCLES = 5
 MAX_EXPERIMENT_CYCLES = 3
-ALLOWED_PROFILES = ('boot', 'experiment')
+ALLOWED_PROFILES = ('boot', 'experiment', 'resource')
 KEEP_RUNS = 20
 TIMEOUT_SECONDS = 85
 LOG_TAIL_BYTES = 16384
@@ -43,7 +43,11 @@ def parse_boot_result(log: str, profile: str = 'boot') -> dict | None:
     """Extract only the fixed profile's structured result; ignore other text."""
     if profile not in ALLOWED_PROFILES:
         raise ValueError("Unsupported guest profile")
-    expected_key = "experiment_passed" if profile == "experiment" else "guest_booted"
+    expected_key = {
+        "boot": "guest_booted",
+        "experiment": "experiment_passed",
+        "resource": "resource_observation_passed",
+    }[profile]
     for line in reversed(log.splitlines()):
         try:
             value = json.loads(line)
@@ -71,7 +75,11 @@ def run_cycle(probe: Path = DEFAULT_PROBE, *,
         # Session isolation lets the supervisor kill the probe AND any QEMU
         # process it spawned if the outer time limit fires.
         child = subprocess.Popen(
-            [sys.executable, str(probe), "--experiment" if profile == "experiment" else "--boot"],
+            [sys.executable, str(probe), {
+                "boot": "--boot",
+                "experiment": "--experiment",
+                "resource": "--resource-observation",
+            }[profile]],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -104,15 +112,23 @@ def run_cycle(probe: Path = DEFAULT_PROBE, *,
                     "cpu_system_seconds", "qemu_peak_rss_kib")
     resource_evidence_valid = (payload is not None and all(
         type(payload.get(key)) in (int, float)
+        and not isinstance(payload.get(key), bool)
         and math.isfinite(payload[key]) and payload[key] >= 0
         for key in numeric_keys
     ))
     agreed = (payload is not None and (
-        payload.get("experiment_passed") is True
-        and payload.get("known_answers_verified") is True
-        and payload.get("workload") == "fixed_arithmetic_sha256_v1"
-        and resource_evidence_valid
-        if profile == "experiment" else payload.get("guest_booted") is True
+        (
+            payload.get("experiment_passed") is True
+            and payload.get("known_answers_verified") is True
+            and payload.get("workload") == "fixed_arithmetic_sha256_v1"
+            and resource_evidence_valid
+        ) if profile == "experiment" else (
+            payload.get("resource_observation_passed") is True
+            and payload.get("known_answers_verified") is True
+            and payload.get("resource_bounds_verified") is True
+            and payload.get("workload") == "fixed_zero32m_sha256_v1"
+            and resource_evidence_valid
+        ) if profile == "resource" else payload.get("guest_booted") is True
     ))
     passed = (
         not timed_out and error is None and returncode == 0 and agreed
@@ -136,7 +152,7 @@ def run_cycle(probe: Path = DEFAULT_PROBE, *,
             resource_ok=resource_evidence_valid,
         ),
     }
-    if profile == "experiment" and payload is not None:
+    if profile in ("experiment", "resource") and payload is not None:
         # Resource figures come from the QEMU subprocess, not host-wide load.
         result["qemu_resources"] = {
             key: payload.get(key)
@@ -144,6 +160,10 @@ def run_cycle(probe: Path = DEFAULT_PROBE, *,
                         "cpu_system_seconds", "qemu_peak_rss_kib")
         }
         result["known_answers_verified"] = payload.get("known_answers_verified") is True
+        if profile == "resource":
+            result["resource_bounds_verified"] = (
+                payload.get("resource_bounds_verified") is True
+            )
     return result, log
 
 
@@ -164,8 +184,11 @@ def file_sha256_if_safe(path: Path) -> str | None:
 
 
 def run_manifest(profile: str, cycles: int, probe: Path) -> dict:
-    image = ("experiment-v1.cpio.gz" if profile == "experiment"
-             else "microguest.cpio.gz")
+    image = {
+        "boot": "microguest.cpio.gz",
+        "experiment": "experiment-v1.cpio.gz",
+        "resource": "resource-v1.cpio.gz",
+    }[profile]
     root = Path("/usr/local/lib/slipcage")
     return {
         "schema_version": 1,
@@ -199,7 +222,7 @@ def classify_failure(*, passed: bool, timed_out: bool,
         return "probe_missing_exit_status"
     if payload is None:
         return "missing_structured_probe_result"
-    if profile == "experiment" and not resource_ok:
+    if profile in ("experiment", "resource") and not resource_ok:
         return "resource_evidence_missing_or_invalid"
     if payload.get("network") != "disabled" or payload.get("persistent_guest_disk") is not False:
         return "unexpected_guest_configuration"
@@ -211,6 +234,14 @@ def classify_failure(*, passed: bool, timed_out: bool,
         or payload.get("workload") != "fixed_arithmetic_sha256_v1"
     ):
         return "known_answer_mismatch"
+    if profile == "resource":
+        if (payload.get("known_answers_verified") is not True
+                or payload.get("workload") != "fixed_zero32m_sha256_v1"):
+            return "resource_known_answer_mismatch"
+        if payload.get("resource_bounds_verified") is not True:
+            return "resource_bound_violation"
+        if payload.get("resource_observation_passed") is not True:
+            return "resource_validation_failed"
     if profile == "boot" and payload.get("guest_booted") is not True:
         return "boot_validation_failed"
     if returncode != 0:
@@ -247,7 +278,7 @@ def run_lifecycle(cycles: int, *, probe: Path = DEFAULT_PROBE,
         raise ValueError("Use between 1 and 5 cycles")
     if profile not in ALLOWED_PROFILES:
         raise ValueError("Unsupported guest profile")
-    if profile == "experiment" and cycles > MAX_EXPERIMENT_CYCLES:
+    if profile in ("experiment", "resource") and cycles > MAX_EXPERIMENT_CYCLES:
         raise ValueError("Use at most 3 controlled experiment cycles")
     if not (0 < timeout <= TIMEOUT_SECONDS):
         raise ValueError("Invalid cycle timeout")
@@ -283,8 +314,11 @@ def run_lifecycle(cycles: int, *, probe: Path = DEFAULT_PROBE,
                 # Don't repeatedly boot guests after a failure.
                 break
         summary = {
-            "mode": ("fixed_arithmetic_sha256_v1" if profile == "experiment" else
-                     "benign_diskless_guest_lifecycle"),
+            "mode": {
+                "boot": "benign_diskless_guest_lifecycle",
+                "experiment": "fixed_arithmetic_sha256_v1",
+                "resource": "fixed_resource_observation_v1",
+            }[profile],
             "run_dir": str(directory),
             "requested_cycles": cycles,
             "completed_cycles": len(results),
