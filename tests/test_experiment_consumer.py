@@ -200,7 +200,7 @@ class ExperimentConsumerTests(unittest.TestCase):
         for change in (
             {"command": "echo arbitrary payload"},
             {"runner": "shell_script"},
-            {"cycles": 2},
+            {"cycles": 4},
             {"status": "draft"},
         ):
             with self.subTest(change=change):
