@@ -46,6 +46,69 @@ class QemuDiscoveryTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 isolab.record(conn, qemu, focus="unknown")
 
+    def test_incidental_qemu_guest_mentions_do_not_qualify(self):
+        # This mirrors the real NVD pattern: a Linux device bug was
+        # reproduced *inside* QEMU, but QEMU is not the affected subsystem.
+        irrelevant = entry("CVE-2026-98238",
+            "In the Linux kernel, the following vulnerability has been resolved:\n\n"
+            "net: wwan: t7xx: validate the netif index in t7xx_ccmni_recv_skb()\n\n"
+            "Verified in a QEMU guest with a fault injector.")
+        relevant = entry("CVE-2026-98164",
+            "In the Linux kernel, the following vulnerability has been resolved:\n\n"
+            "KVM: x86/mmu: Check write tracking in all address spaces\n\n"
+            "The issue affects KVM page tracking.")
+        self.assertEqual(isolab.primary_advisory_subject(
+            "CVE-2026-98238: Linux kernel issue",
+            irrelevant["cve"]["descriptions"][0]["value"]),
+            "net: wwan: t7xx: validate the netif index in t7xx_ccmni_recv_skb()")
+        with isolab.connect(self.db) as conn:
+            self.assertFalse(isolab.record(conn, isolab.nvd_item(irrelevant), focus="qemu"))
+            self.assertTrue(isolab.record(conn, isolab.nvd_item(relevant), focus="qemu"))
+        fetch = lambda url: {"totalResults": 2, "vulnerabilities": [irrelevant, relevant]}
+        found = isolab.nvd_qemu_publications(
+            date(2026, 10, 1), date(2026, 10, 7), fetcher=fetch)
+        self.assertEqual([item["source_id"] for item in found], ["CVE-2026-98164"])
+
+    def test_leads_hide_prior_false_positives_without_deleting_them(self):
+        examples = [
+            ("CVE-2026-98238", "net: wwan: t7xx: bounds check",
+             "Verified in a QEMU guest.", "reviewed"),
+            ("CVE-2026-98283", "KVM: PPC: Book3S HV: use-after-free",
+             "Memory issue in KVM PPC.", "pending"),
+            ("CVE-2026-98164", "KVM: x86/mmu: Check write tracking",
+             "MMU code in KVM x86.", "pending"),
+            ("CVE-2024-7409", "QEMU NBD Server synchronization flaw",
+             "QEMU NBD socket closing.", "reviewed"),
+        ]
+        with isolab.connect(self.db) as conn:
+            for cv, heading, detail, status in examples:
+                item = {"source": "nvd", "source_id": cv, "cve": cv,
+                        "title": cv + ": In the Linux kernel, the following vulnerability has been resolved:\n\n" + heading,
+                        "summary": "In the Linux kernel, the following vulnerability has been resolved:\n\n"
+                                   + heading + "\n\n" + detail,
+                        "url": "https://nvd.nist.gov/vuln/detail/" + cv}
+                # Ordinary mixed-scope sync may already have admitted a
+                # body-only match; the shortlist must exclude it.
+                self.assertTrue(isolab.record(conn, item))
+                conn.execute("UPDATE candidates SET status=? WHERE source_id=?", (status, cv))
+            conn.commit()
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(isolab.qemu_leads(self.db, limit=15), 0)
+        leads = json.loads(out.getvalue())["leads"]
+        self.assertEqual([x["cve"] for x in leads],
+            ["CVE-2026-98164", "CVE-2024-7409", "CVE-2026-98283"])
+        self.assertEqual([x["lab_fit"] for x in leads],
+            ["x86_64", "architecture_unspecified", "other_architecture"])
+        self.assertEqual(leads[0]["affected_subsystem"],
+                         "KVM: x86/mmu: Check write tracking")
+        with isolab.connect(self.db) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM candidates").fetchone()[0], 4)
+            self.assertEqual(conn.execute(
+                "SELECT status FROM candidates WHERE source_id='CVE-2026-98238'"
+            ).fetchone()[0], "reviewed")
+
+
     def test_bounded_publication_search_only_calls_nvd_with_fixed_keywords(self):
         seen = []
         fixtures = {

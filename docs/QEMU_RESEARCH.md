@@ -46,6 +46,10 @@ or choose a smaller date window; don't schedule repeated bulk searches.
 
 Duplicate NVD CVEs are merged by stable source ID. An existing
 reviewed candidate is not reset to pending by a repeat search.
+QEMU/KVM focus now uses the **affected subsystem heading** for Linux
+CVEs, not an incidental mention of testing inside a QEMU guest.
+Previously stored context-only candidates are retained in SQLite, but
+excluded from the focused leads view.
 Research scores and upstream commit references are heuristic and
 not confirmed patch applicability.
 
@@ -58,10 +62,14 @@ sudo -u isolab /usr/bin/python3 /opt/isolab/app/isolab.py qemu-leads \
   --db /srv/isolab/research.sqlite3 --limit 15
 ```
 
-The command prints JSON with source, CVE, research-fit score, status,
-and *unverified* allowlisted upstream commit links, where available.
-It does not enqueue reviews, download PoCs or run guests. The score
-does **not** establish severity, exploitability, or novelty.
+The command prints JSON with source, CVE, affected subsystem, x86-64
+lab-fit category, research-fit score, status, and *unverified* allowlisted
+upstream commit links, where available. It sorts direct x86-relevant
+subsystems first, then unspecified architecture, then other-architecture
+subsystems (e.g. KVM PowerPC), and by research score within each group.
+It does not enqueue reviews, download PoCs or run guests. This is an
+operator-priority heuristic, **not** evidence that the VPS is affected,
+severity, exploitability, or novelty.
 The resulting reports under `/srv/isolab/reports` remain private.
 
 ## Verify
