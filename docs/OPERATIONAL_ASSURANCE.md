@@ -1,7 +1,9 @@
-# Slipcage v0.10 — Operational Assurance and Alerting
+# Slipcage-smol — Local Operational Assurance (v0.10 lineage)
 
-This release improves the *existing metadata-only operations* without
-enabling more workloads. Guest VM execution remains manual. Nothing here
+Smol retains v0.10's backup and health verification without
+enabling more workloads. These instructions apply only to a separately
+approved fresh smol host—not the original production VPS. Guest VM
+execution remains manual. Nothing here
 starts QEMU, fuzzes, sends off-VPS backup copies, changes the production DB
 or authorizes provider-boundary tests.
 
@@ -50,46 +52,27 @@ unattended cleanup of unknown residue is added.
 This validates a *local backup* but cannot protect against losing
 the entire VPS. Encrypted off-server backups remain deferred.
 
-## 2. Optional external incident notifications (OFF by default)
+## 2. Local health alerts (no remote notifier)
 
-The new alert-dispatch.py is a **transport-neutral generic JSON HTTPS
-webhook** client. It reads only the latest root-private health status
-(checked no more than 3 hours ago), sends a minimal payload containing
-service, warning/recovery type, issue codes and health-check timestamp.
-It NEVER sends research records, backup contents, logs, disk metrics,
-host addresses, or secret webhook URLs in its JSON output.
+Smol retains the **hourly passive health checker**
+(`slipcage-health.service`) and its local status record
+(`/var/lib/slipcage-health/status.json`). Each check writes JSON to
+the local systemd journal. On a change in issue codes, it emits
+`SLIPCAGE_HEALTH_WARNING` or `SLIPCAGE_HEALTH_RECOVERED`;
+repeat warnings are deduplicated in the journal transition stream.
 
-It suppresses identical successfully delivered issue sets, sends
-a recovery only after an earlier warning was delivered, and saves
-the issue signature **only after an HTTPS 2xx** response. Delivery
-failure leaves it eligible to retry on the next invocation.
-This is *at-least-once*, not a exactly-once transaction: a network
-failure after a server has accepted an alert but before the local
-receipt could cause a duplicate. No retries run in a tight loop.
+Read-only checks on a **separately enrolled smol host**:
 
-Preview without any network traffic or credentials:
+    sudo cat /var/lib/slipcage-health/status.json
+    sudo journalctl -u slipcage-health.service -n 50 --no-pager -l
+    sudo systemctl status slipcage-health.timer --no-pager
 
-    sudo python3 /usr/local/lib/slipcage/alert-dispatch.py
-
-**Do not enable external delivery until you explicitly choose a
-compatible HTTPS JSON webhook endpoint and authorize it.**
-This requires configuring a root-owned, mode 0600
-/etc/slipcage/health-webhook.url containing one operator-provided HTTPS
-URL. Never commit it to GitHub, paste it into this chat, or expose it in
-logs. A generic webhook must accept this JSON structure; Slack/Discord
-and other APIs may require a provider-specific adapter later.
-
-The units slipcage-alert-dispatch.service and its timer are installed
-but **NOT enabled, started, or configured by Ansible**. After separate
-approval and testing with your chosen endpoint, the operator can
-explicitly start the service once and subsequently enable the optional
-hourly alert timer. The service itself requires the private endpoint
-file and network access. Endpoints must be HTTPS hostnames with
-default port 443, no redirects or proxy forwarding; this remains a
-network-capable service only if manually enabled.
-
-This workflow does not create an email account, new paid service,
-offsite backup, or notification connector automatically.
+Smol does **not** install the optional v0.10 HTTPS webhook dispatcher
+or its systemd service/timer. No external notification transport is
+configured or promised, and there is no notification credential
+workflow. Local journal warnings require an operator to read them.
+If off-VPS alerts are ever needed, review them as a separate feature
+with an explicit destination and security/privacy requirements.
 
 ## 3. Incident response
 
@@ -99,7 +82,7 @@ See [Incident Runbooks](INCIDENT_RUNBOOKS.md) for triage of:
 - interrupted disposable VM experiments;
 - failed release pull deployments;
 - Dagu/recovery service failures;
-- absent/failed alert delivery.
+- inspecting locally retained health warnings and status.
 
 All runbooks use **read-only checks first**. They do not authorize
 automatic deletion, forced service restarts, database replacement
@@ -108,14 +91,14 @@ or executing new VM/fuzzing payloads.
 ## Human release gates
 
 1. CI offline tests and service/Ansible review must pass.
-2. Merge the PR; manually request and approve v0.10.0 release through
-   the existing GitHub workflow.
-3. VPS pull-deploy; check deployed SHA.
-4. Manually run the bounded assurance once, then inspect hourly
-   health status. Do **not** enable notifications merely because
-   the health check passed.
-5. Choose an alert destination later, if desired, then approve
-   endpoint-specific delivery as a separate operational change.
+2. Merge a reviewed change; if an independent fresh smol host has been
+   separately approved, publish a **smol repository** release manually.
+3. On that separate host only, check the smol deployed SHA.
+4. Run bounded restore assurance once and inspect the local hourly
+   health status; no external notifications or guest experiments are
+   activated by this process.
+5. Preserve the original Slipcage VPS deployment and all its data.
+   An in-place migration is not covered by this document.
 
 This is not a full disaster recovery service or hypervisor security
 assurance. It is deliberately conservative operational evidence.

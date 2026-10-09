@@ -1,14 +1,13 @@
-"""v0.10: true local scratch restores, opt-in incident alerts and timer boundaries."""
+"""Real local scratch-restore checks and the bounded weekly service contract."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import importlib.util
 import json
 from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
 import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,7 +21,6 @@ def load(name, filename):
 
 
 assurance = load("assurance_v10", "slipcage-assurance.py")
-alerts = load("alerts_v10", "slipcage-alert-dispatch.py")
 backup = load("backup_v10", "slipcage-backup.py")
 restore = load("restore_v10", "slipcage-restore-check.py")
 
@@ -122,109 +120,50 @@ class AssuranceTests(unittest.TestCase):
         self.assertNotIn("qemu", unit.lower())
 
 
-class AlertTests(unittest.TestCase):
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name)
-        self.now = NOW
-        self.health = self.root / "health.json"
-        self.state = self.root / "state"
-        self.state.mkdir()
-        self.endpoint = self.root / "secret.url"
-        self.endpoint.write_text("https://alerts.example.org/unique-test-placeholder\n")
-        self.endpoint.chmod(0o600)
-        self.events = []
-        self.sender = lambda url, event: self.events.append(event)
-        self.set_health([])
+class LocalOnlyAlertBoundaryTests(unittest.TestCase):
+    def test_only_local_journal_health_warnings_remain(self):
+        health = (ROOT / "scripts/slipcage-health.py").read_text()
+        unit = (ROOT / "systemd/slipcage-health.service").read_text()
+        timer = (ROOT / "systemd/slipcage-health.timer").read_text()
+        self.assertIn("SLIPCAGE_HEALTH_WARNING", health)
+        self.assertIn("SLIPCAGE_HEALTH_RECOVERED", health)
+        self.assertIn("StandardError=journal", unit)
+        self.assertIn("PrivateNetwork=yes", unit)
+        self.assertIn("Unit=slipcage-health.service", timer)
 
-    def set_health(self, issues, when=None):
-        self.health.write_text(json.dumps({
-            "checked_utc": (when or self.now).isoformat(),
-            "healthy": not issues, "issues": issues,
-            "secret_research": "must-never-be-transmitted",
-        }))
+    def test_benign_manual_guest_runtime_is_still_packaged(self):
+        site = (ROOT / "playbooks/site.yml").read_text()
+        for pkg in ("qemu-system-x86", "busybox-static", "cpio"):
+            self.assertIn("          - " + pkg, site)
+        probe = (ROOT / "scripts/slipcage-kvm-probe.py").read_text()
+        self.assertIn('QEMU = "/usr/bin/qemu-system-x86_64"', probe)
+        for filename in ("build-microguest.sh", "build-experiment-guest.sh"):
+            builder = (ROOT / "scripts" / filename).read_text()
+            self.assertIn("busybox-static is required", builder)
+            self.assertIn("cpio is required", builder)
+        for unit in ("slipcage-experiment@.service",
+                     "slipcage-guest-cycles@.service"):
+            text = (ROOT / "systemd" / unit).read_text()
+            self.assertIn("PrivateNetwork=yes", text)
+            self.assertIn("DeviceAllow=/dev/kvm rw", text)
+            self.assertNotIn("WantedBy=", text)
 
-    def dispatch(self, *, send=False, sender=None):
-        return alerts.dispatch(health=self.health, state=self.state,
-                               destination=self.endpoint, send=send,
-                               sender=sender or self.sender, now=self.now)
-
-    def test_preview_never_transmits_or_requires_webhook_credentials(self):
-        self.set_health(["disk_space_low"])
-        self.endpoint.unlink()
-        result = self.dispatch()
-        self.assertEqual(result["mode"], "preview")
-        self.assertTrue(result["will_notify"])
-        self.assertFalse(result["delivered"])
-        self.assertEqual(self.events, [])
-        self.assertEqual(list(self.state.iterdir()), [])
-        self.assertNotIn("must-never-be-transmitted", json.dumps(result))
-
-    def test_initial_healthy_state_sends_nothing(self):
-        result = self.dispatch(send=True)
-        self.assertFalse(result["delivered"])
-        self.assertEqual(self.events, [])
-
-    def test_warning_change_and_recovery_each_deliver_once(self):
-        self.set_health(["disk_space_low"])
-        self.assertTrue(self.dispatch(send=True)["delivered"])
-        self.assertFalse(self.dispatch(send=True)["delivered"])
-        self.set_health(["disk_space_low", "inactive_unit:slipcage-backup.timer"])
-        self.assertTrue(self.dispatch(send=True)["delivered"])
-        self.assertEqual(len(self.events), 2)
-        self.set_health([])
-        self.assertTrue(self.dispatch(send=True)["delivered"])
-        self.assertFalse(self.dispatch(send=True)["delivered"])
-        self.assertEqual(self.events[-1]["type"], "recovered")
-        self.assertNotIn("secret_research", json.dumps(self.events))
-        self.assertEqual(len(self.events), 3)
-
-    def test_failed_delivery_not_recorded_and_retries_next_time(self):
-        self.set_health(["local_backup:backup_too_old_or_future"])
-        def fail(url, event):
-            raise OSError("simulated failure")
-        with self.assertRaises(OSError):
-            self.dispatch(send=True, sender=fail)
-        self.assertFalse((self.state / "last-delivered.json").exists())
-        self.assertTrue(self.dispatch(send=True)["delivered"])
-
-    def test_stale_health_status_or_malformed_issue_codes_block_transmission(self):
-        self.set_health(["disk_space_low"], when=self.now - timedelta(days=1))
-        with self.assertRaises(ValueError):
-            self.dispatch(send=True)
-        self.set_health(["invalid issue \n value"])
-        with self.assertRaises(ValueError):
-            self.dispatch(send=True)
-        self.assertEqual(self.events, [])
-
-    def test_endpoint_rejects_insecure_symlink_nonprivate_and_redirects(self):
-        self.endpoint.write_text("http://example.org/hook\n")
-        with self.assertRaises(ValueError):
-            alerts.endpoint_url(self.endpoint)
-        self.endpoint.write_text("https://example.org/hook\n")
-        self.endpoint.chmod(0o644)
-        with self.assertRaises(ValueError):
-            alerts.endpoint_url(self.endpoint)
-        self.endpoint.chmod(0o600)
-        self.endpoint.unlink()
-        self.endpoint.symlink_to("/etc/passwd")
-        with self.assertRaises(ValueError):
-            alerts.endpoint_url(self.endpoint)
-
-    def test_opt_in_service_and_timer_are_not_enabled_by_ansible(self):
-        service = (ROOT / "systemd/slipcage-alert-dispatch.service").read_text()
-        timer = (ROOT / "systemd/slipcage-alert-dispatch.timer").read_text()
+    def test_no_remote_notifier_is_installed_or_scheduled(self):
         playbook = (ROOT / "playbooks/site.yml").read_text()
-        self.assertIn("ConditionPathExists=/etc/slipcage/health-webhook.url", service)
-        self.assertIn("ExecStart=/usr/bin/python3 /usr/local/lib/slipcage/alert-dispatch.py --send", service)
-        self.assertIn("NoNewPrivileges=yes", service)
-        self.assertIn("ProtectSystem=strict", service)
-        self.assertIn("Unit=slipcage-alert-dispatch.service", timer)
-        self.assertNotIn("enable", playbook.split(
-            "- name: Install disabled-by-default HTTPS alert timer")[1].split(
-            "\n    - name: ", 1)[0].lower())
-        self.assertNotIn("slipcage-alert-dispatch.timer\n        daemon_reload", playbook)
+        for path in (
+            ROOT / "scripts/slipcage-alert-dispatch.py",
+            ROOT / "systemd/slipcage-alert-dispatch.service",
+            ROOT / "systemd/slipcage-alert-dispatch.timer",
+        ):
+            self.assertFalse(path.exists(), str(path))
+        self.assertNotIn("alert-dispatch", playbook)
+        self.assertNotIn("health-webhook.url", playbook)
+        self.assertIn("Protect private smol release-channel configuration", playbook)
+        self.assertIn("path: /etc/slipcage", playbook)
+        self.assertIn("Enable bounded read-only operational health checks", playbook)
+        self.assertIn("Enable bounded weekly local backup assurance", playbook)
+        self.assertIn("Enable scheduled Slipcage backups", playbook)
+
 
 if __name__ == "__main__":
     unittest.main()

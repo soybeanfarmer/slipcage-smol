@@ -49,7 +49,7 @@ has no account/billing/tenant/marketing application code.
 | Host health | `scripts/slipcage-health.py`, `systemd/slipcage-health.*` | Approx. hourly; local journal status/warnings | **Keep** |
 | Disposable guest execution | `scripts/slipcage-kvm-probe.py`, guest lifecycle, build scripts, `slipcage-guest-cycles@.service`, `slipcage-experiment@.service` | **Manual-only**, fixed benign work; no timer | **Keep separately bounded** |
 | Evidence safety | `slipcage-experiment-audit.py`, `slipcage-limits-check.py`, `slipcage-fault-drill.py`, `slipcage-fault-retention.py` | Manual-only read-only audits and guest-free drills; deletion requires explicit reviewed flags | **Keep** |
-| Optional external alerts | `slipcage-alert-dispatch.py`, alert systemd service/timer | Installed but disabled, no configured endpoint | **Deferred/optional** |
+| Local operational warnings | `slipcage-health.py`, health systemd service/timer | Hourly private JSON/journal, no external notifier | **Protect** |
 | Off-server backup | Removed from smol (historical v0.10 included a dormant Restic runner and service/timer) | **No smol offsite implementation** | **Out of scope** |
 | VPS pull deployment | `bootstrap-pull.sh`, `pull-deploy.sh`, `slipcage-pull-deploy.*` | Smol origin only on a separately enrolled fresh host; original VPS stays separate | **Guarded; sandbox validation pending** |
 
@@ -101,10 +101,11 @@ It is **not part** of advisory discovery or normal scheduled operations.
    operator overview is a safe first cleanup.
 3. **Optional surface even when disabled.** The dormant
    Restic/off-server backup script, service, timer, and package
-   requirement are removed in smol PR 3. The separately opt-in HTTPS
-   notifier and optional development toolchain are still present.
-   Review any further removal separately: deleting a source file does
-   not erase pre-existing installed units or configuration.
+   requirement were removed in smol PR 3. The dormant HTTPS notifier
+   and its two systemd units are removed in smol PR 4, while local
+   journal health warnings remain. The compiler/debugger toolchain is
+   unchanged; review it in a separate PR. Deleting source files alone
+   never removes existing host units or configuration.
 4. **Monolithic installation manifest.**
    `playbooks/site.yml` wires research, backups, health, guest
    tooling and optional modules in one play. Splitting deployment
@@ -134,19 +135,24 @@ The existing server stays unchanged. Validate actual installation
 only later on a separate operator-approved disposable sandbox
 before calling independent production readiness proven.
 
-**PR 3 (this PR):** Remove only the dormant off-server backup runner,
+**PR 3 (merged):** Remove only the dormant off-server backup runner,
 its two systemd units, Ansible install tasks and unused Restic package.
 Do **not** touch local daily backups, weekly scratch restores, research
 DBs or manual guest experiments. Smol has never published a release;
 this PR does not delete any file/unit from a running host.
 
-**Future separate review:** Decide whether the disabled HTTPS notifier
-should remain as optional reliability tooling, and whether compiler/
-QEMU build dependencies should be installed only when needed. Do not
-remove existing packages/services from any host without a separate
-migration plan and live-use inventory.
+**PR 4 (this PR):** Remove the unconfigured outbound HTTPS notifier,
+service and timer; keep hourly private JSON and local journal
+health warnings unchanged. Keep all backup assurance tests and add
+regressions for the local-only monitoring boundary.
 
-**PR 4:** Refactor the monolithic Ansible playbook only if it
+**Future separate toolchain PR:** Separate packages needed to run the
+reviewed benign guest (`qemu-system-x86`, `busybox-static`, `cpio`)
+from compiler/debugger packages for unapproved source builds.
+Do not remove existing packages/services from any live host without
+a separate migration plan and live-use inventory.
+
+**Later PR:** Refactor the monolithic Ansible playbook only if it
 reduces operator burden; require syntax tests, a fresh sandbox
 installation, an idempotent repeat run, and an existing-installation
 upgrade test before making it a deploy path.

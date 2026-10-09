@@ -34,12 +34,12 @@ exploit reproduction, fuzzers, hypervisor escapes or network scans.
 Advisory descriptions and URLs are treated as **untrusted data**, not
 commands or proof that a vulnerability exists.
 
-Optional HTTPS health notification tooling is present from v0.10,
-**but disabled** until an operator approves and configures a compatible
-endpoint. The unused Restic/off-server-backup integration has been
-**removed from smol**; encrypted off-server disaster recovery remains
-unconfigured and is not claimed by this project. Daily local backups
-and weekly scratch restores are unchanged.
+Health issues are reported **locally** in private status JSON and the
+systemd journal; smol does not install an external webhook notifier or
+send operational messages off the VPS. The unused Restic/off-server-backup
+integration has also been **removed**. Smol does **not** provide
+off-server disaster recovery. Daily local backups and weekly verified
+scratch restores remain unchanged.
 
 ## Where the code lives
 
@@ -54,7 +54,8 @@ and weekly scratch restores are unchanged.
 | `docs/` | Operations, historical milestones, incident response and current smol audit |
 
 Read [**Smol scope and safety rules**](docs/SMOL_SCOPE.md) first,
-then [**the repository audit and proposed cleanup sequence**](docs/SMOL_AUDIT.md).
+then [**the repository audit and proposed cleanup sequence**](docs/SMOL_AUDIT.md)
+and the [**benign guest dependency audit**](docs/SMOL_DEPENDENCIES.md).
 For specific v0.10 operations, consult
 [backup operations](docs/BACKUPS.md),
 [controlled experiments](docs/CONTROLLED_EXPERIMENTS.md),
