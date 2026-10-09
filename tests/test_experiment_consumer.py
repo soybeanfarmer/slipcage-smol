@@ -23,13 +23,13 @@ APPROVED = {
 }
 
 
-def passed_evidence():
+def passed_evidence(cycles=1):
     return {
-        "mode": "fixed_arithmetic_sha256_v1", "requested_cycles": 1,
-        "completed_cycles": 1, "successful_cycles": 1,
+        "mode": "fixed_arithmetic_sha256_v1", "requested_cycles": cycles,
+        "completed_cycles": cycles, "successful_cycles": cycles,
         "passed": True, "network": "disabled", "persistent_guest_disk": False,
         "run_dir": "/private/guest/run-fixture",
-        "cycles": [{"passed": True, "known_answers_verified": True}],
+        "cycles": [{"passed": True, "known_answers_verified": True} for _ in range(cycles)],
     }
 
 
@@ -54,9 +54,9 @@ class ExperimentConsumerTests(unittest.TestCase):
             state=self.state, owner=self.uid,
             runner=runner if runner is not None else self.fake_runner)
 
-    def fake_runner(self):
+    def fake_runner(self, cycles=1):
         self.executions += 1
-        return passed_evidence()
+        return passed_evidence(cycles)
 
     def result_files(self):
         return list((self.state / "experiment-results").glob("EXP-*.json"))
@@ -96,7 +96,7 @@ class ExperimentConsumerTests(unittest.TestCase):
         self.assertEqual(self.executions, 2)
 
     def test_previous_failed_or_interrupted_claim_is_never_retried_on_release(self):
-        self.assertEqual(self.run_once(runner=lambda: {"passed": False})["status"],
+        self.assertEqual(self.run_once(runner=lambda _cycles: {"passed": False})["status"],
                          "failed")
         self.revision.write_text(SHA2 + "\n")
         self.assertEqual(self.run_once()["status"], "idle")
@@ -118,6 +118,23 @@ class ExperimentConsumerTests(unittest.TestCase):
         self.assertEqual(self.run_once()["status"], "idle")
         self.assertEqual(self.executions, 300)
         self.assertEqual(len(self.result_files()), 300)
+
+    def test_bounded_cycle_count_is_forwarded_to_fixed_runner(self):
+        manifest = {**APPROVED, "cycles": 3}
+        self.manifest.write_text(json.dumps(manifest))
+        seen = []
+        result = self.run_once(runner=lambda cycles: (seen.append(cycles) or passed_evidence(cycles)))
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["cycles"], 3)
+        self.assertEqual(seen, [3])
+
+    def test_cycle_count_outside_fixed_lifecycle_limit_is_rejected(self):
+        for cycles in (0, 4, True):
+            with self.subTest(cycles=cycles):
+                self.manifest.write_text(json.dumps({**APPROVED, "cycles": cycles}))
+                with self.assertRaises(ValueError):
+                    consumer.read_manifest(self.manifest, owner=self.uid)
+
 
     def test_bad_previous_record_fails_closed_before_running_new_work(self):
         self.run_once()
@@ -141,7 +158,7 @@ class ExperimentConsumerTests(unittest.TestCase):
         self.assertEqual(len(self.result_files()), 2)
 
     def test_failure_not_rerun_and_provenance_preserved(self):
-        failed = self.run_once(runner=lambda: {"passed": True})
+        failed = self.run_once(runner=lambda _cycles: {"passed": True})
         self.assertEqual(failed["status"], "failed")
         self.assertEqual(failed["outcome"], "missing_or_failed_fixed_guest_evidence")
         self.assertEqual(self.run_once()["status"], "idle")
@@ -150,10 +167,10 @@ class ExperimentConsumerTests(unittest.TestCase):
     def test_fake_success_without_known_answers_is_not_accepted(self):
         evidence = passed_evidence()
         evidence["cycles"][0]["known_answers_verified"] = False
-        self.assertEqual(self.run_once(runner=lambda: evidence)["status"], "failed")
+        self.assertEqual(self.run_once(runner=lambda _cycles: evidence)["status"], "failed")
 
     def test_failed_exception_message_not_written_to_results(self):
-        def fault():
+        def fault(_cycles):
             raise RuntimeError("do not leak secrets to repo or journal")
         saved = self.run_once(runner=fault)
         self.assertEqual(saved["status"], "failed")
