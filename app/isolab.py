@@ -15,7 +15,6 @@ import os
 from pathlib import Path
 import re
 import sqlite3
-import subprocess
 import sys
 import tempfile
 from urllib.error import HTTPError, URLError
@@ -214,29 +213,6 @@ def analyze(db: str) -> int:
     return 0
 
 
-def enqueue(db: str, workflow: str, max_outstanding: int) -> int:
-    conn = connect(db)
-    try:
-        result = recovery.enqueue(conn, workflow, max_outstanding)
-        print(f"enqueued={result['enqueued']} delivery_failures={result['delivery_failures']}")
-    finally:
-        conn.close()
-    return 0 if result['delivery_failures'] == 0 else 1
-
-
-def recover(db: str, workflow: str, max_outstanding: int) -> int:
-    conn = connect(db)
-    try:
-        state = recovery.reconcile(conn)
-        result = recovery.enqueue(conn, workflow, max_outstanding)
-        print(json.dumps({"reconciliation": state, "delivery": result}, sort_keys=True))
-    finally:
-        conn.close()
-    # Legacy outstanding work and ambiguous live workers require manual inspection,
-    # not blind retry. The command succeeds so the timer can continue checking.
-    return 0 if result["delivery_failures"] == 0 else 1
-
-
 def run_review(db: str, output: str, candidate_id: str, attempt: str) -> int:
     if not ID_PATTERN.fullmatch(candidate_id):
         raise ValueError("Candidate ID must be lowercase SHA-256 hex")
@@ -322,15 +298,9 @@ def status(db: str) -> int:
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
-    for name in ("sync", "analyze", "enqueue", "recover", "run-review", "report", "status"):
+    for name in ("sync", "analyze", "run-review", "report", "status"):
         sub.add_parser(name).add_argument("--db", required=True)
     sub.add_parser("smoke").add_argument("--output", required=True)
-    enq = sub.choices["enqueue"]
-    enq.add_argument("--workflow", required=True)
-    enq.add_argument("--max-outstanding", type=int, default=3)
-    rec = sub.choices["recover"]
-    rec.add_argument("--workflow", required=True)
-    rec.add_argument("--max-outstanding", type=int, default=3)
     worker = sub.choices["run-review"]
     worker.add_argument("--output", required=True)
     worker.add_argument("--id", required=True)
@@ -344,10 +314,6 @@ def main() -> int:
             return sync(args.db)
         if args.command == "analyze":
             return analyze(args.db)
-        if args.command == "enqueue":
-            return enqueue(args.db, args.workflow, args.max_outstanding)
-        if args.command == "recover":
-            return recover(args.db, args.workflow, args.max_outstanding)
         if args.command == "run-review":
             return run_review(args.db, args.output, args.id, args.attempt)
         if args.command == "report":
