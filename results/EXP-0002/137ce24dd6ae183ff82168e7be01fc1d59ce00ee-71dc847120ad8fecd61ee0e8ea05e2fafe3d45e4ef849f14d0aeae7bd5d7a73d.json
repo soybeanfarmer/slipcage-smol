@@ -1,0 +1,12 @@
+{
+  "approved_release_sha": "137ce24dd6ae183ff82168e7be01fc1d59ce00ee",
+  "claimed_utc": "2026-10-09T18:09:52+00:00",
+  "evidence": "self-reported fixed guest result; requires human review",
+  "experiment_id": "EXP-0002",
+  "finished_utc": "2026-10-09T18:09:55+00:00",
+  "manifest_sha256": "71dc847120ad8fecd61ee0e8ea05e2fafe3d45e4ef849f14d0aeae7bd5d7a73d",
+  "outcome": "guest_boot_verified",
+  "runner": "fixed_guest_boot_v1",
+  "schema_version": 1,
+  "status": "passed"
+}
