@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""Consume one approved release-bundled experiment via the fixed benign guest runner.
+
+No network, Git credentials, shell, dynamic commands, or arbitrary guest images.
+A durable claim precedes guest execution; interrupted/failed jobs require human
+review and will not be automatically retried.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import fcntl
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+import tempfile
+from importlib.machinery import SourceFileLoader
+
+QUEUE = Path("/usr/local/lib/slipcage/experiments")
+REVISION = Path("/var/lib/slipcage/deployed-sha")
+STATE = Path("/var/lib/slipcage-guest")
+DRIVER = Path("/usr/local/lib/slipcage/guest-lifecycle.py")
+EXPERIMENT_ID = re.compile(r"EXP-[0-9]{4}\Z")
+COMMIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
+ALLOWED_RUNNER = "fixed_arithmetic_sha256_v1"
+FIELDS = {"schema_version", "id", "status", "runner", "cycles"}
+MAX_MANIFESTS = 25
+MAX_MANIFEST_BYTES = 4096
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def trusted_file(path: Path, *, owner: int = 0, max_bytes: int) -> bytes:
+    info = path.lstat()
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != owner
+            or info.st_mode & 0o022 or not 0 < info.st_size <= max_bytes):
+        raise ValueError("Untrusted or oversized approved file: " + path.name)
+    # Fixed root-owned directories; no caller-supplied path or URL is accepted.
+    with path.open("rb") as stream:
+        content = stream.read(max_bytes + 1)
+    if not 0 < len(content) <= max_bytes:
+        raise ValueError("Approved file changed size during read")
+    return content
+
+
+def read_revision(path: Path = REVISION, *, owner: int = 0) -> str:
+    value = trusted_file(path, owner=owner, max_bytes=64).decode("ascii").strip()
+    if not COMMIT_SHA.fullmatch(value):
+        raise ValueError("Invalid approved release SHA")
+    return value
+
+
+def read_manifest(path: Path, *, owner: int = 0) -> tuple[dict, str]:
+    if not path.name.endswith(".json"):
+        raise ValueError("Experiment must be a JSON manifest")
+    raw = trusted_file(path, owner=owner, max_bytes=MAX_MANIFEST_BYTES)
+    item = json.loads(raw)
+    if not isinstance(item, dict) or set(item) != FIELDS:
+        raise ValueError("Unknown experiment manifest fields")
+    if (type(item["schema_version"]) is not int or item["schema_version"] != 1
+            or not isinstance(item["id"], str)
+            or not EXPERIMENT_ID.fullmatch(item["id"])
+            or path.name != item["id"] + ".json"
+            or item["status"] != "approved"
+            or item["runner"] != ALLOWED_RUNNER
+            or type(item["cycles"]) is not int or item["cycles"] != 1):
+        raise ValueError("Experiment is not a supported, approved fixed workload")
+    return item, hashlib.sha256(raw).hexdigest()
+
+
+def manifests(queue: Path = QUEUE, *, owner: int = 0) -> list[tuple[dict, str]]:
+    info = queue.lstat()
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != owner
+            or info.st_mode & 0o022):
+        raise ValueError("Approved experiment queue directory is untrusted")
+    files = sorted(queue.iterdir())
+    if len(files) > MAX_MANIFESTS:
+        raise ValueError("Too many approved experiment definitions")
+    return [read_manifest(path, owner=owner) for path in files]
+
+
+def fixed_guest_runner() -> dict:
+    """Always invoke the installed fixed controller: no manifest-driven code."""
+    loader = SourceFileLoader("slipcage_fixed_guest", str(DRIVER))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.run_lifecycle(1, profile="experiment")
+
+
+def publish_json(destination: Path, value: dict) -> None:
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=destination.parent,
+                                         prefix=".result-", delete=False) as stream:
+            temporary = Path(stream.name)
+            os.chmod(temporary, 0o600)
+            json.dump(value, stream, sort_keys=True, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, destination)
+        temporary = None
+        parent_fd = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def claim(destination: Path, value: dict) -> bool:
+    try:
+        descriptor = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY |
+                             os.O_NOFOLLOW, 0o600)
+    except FileExistsError:
+        return False
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        json.dump(value, stream, sort_keys=True, indent=2)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    return True
+
+
+def consume(*, queue: Path = QUEUE, revision_file: Path = REVISION,
+            state: Path = STATE, owner: int = 0, runner=None) -> dict:
+    os.umask(0o077)
+    revision = read_revision(revision_file, owner=owner)
+    definitions = manifests(queue, owner=owner)
+    if state.is_symlink():
+        raise ValueError("Consumer state directory must not be a symlink")
+    state.mkdir(mode=0o700, parents=True, exist_ok=True)
+    result_dir = state / "experiment-results"
+    if result_dir.is_symlink():
+        raise ValueError("Consumer results directory must not be a symlink")
+    result_dir.mkdir(mode=0o700, exist_ok=True)
+    lock_fd = os.open(state / ".consumer.lock",
+                      os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        for definition, digest in definitions:
+            # A new approved release revision is a new, explicit experiment run.
+            key = hashlib.sha256(
+                (definition["id"] + ":" + revision + ":" + digest).encode("ascii")
+            ).hexdigest()
+            destination = result_dir / (definition["id"] + "-" + key + ".json")
+            start = utc_now()
+            base = {
+                "schema_version": 1,
+                "experiment_id": definition["id"],
+                "approved_release_sha": revision,
+                "manifest_sha256": digest,
+                "runner": ALLOWED_RUNNER,
+                "claimed_utc": start,
+            }
+            if not claim(destination, {**base, "status": "claimed"}):
+                # Preserve incomplete claims for review; never automatically retry.
+                continue
+            try:
+                evidence = (runner if runner is not None else fixed_guest_runner)()
+                valid = (isinstance(evidence, dict)
+                         and evidence.get("mode") == ALLOWED_RUNNER
+                         and evidence.get("requested_cycles") == 1
+                         and evidence.get("completed_cycles") == 1
+                         and evidence.get("successful_cycles") == 1
+                         and evidence.get("passed") is True
+                         and evidence.get("network") == "disabled"
+                         and evidence.get("persistent_guest_disk") is False)
+                result = {**base, "status": "passed" if valid else "failed",
+                          "finished_utc": utc_now(),
+                          "outcome": "known_answers_verified" if valid
+                          else "missing_or_failed_fixed_guest_evidence",
+                          "run_dir": (str(evidence.get("run_dir", ""))[:500]
+                                      if isinstance(evidence, dict) else None)}
+            except Exception as exc:
+                # Never include arbitrary exception messages or console logs.
+                result = {**base, "status": "failed", "finished_utc": utc_now(),
+                          "outcome": "runner_exception",
+                          "failure_type": type(exc).__name__}
+            publish_json(destination, result)
+            return {**result, "result_path": str(destination)}
+        return {"status": "idle", "reason": "no_new_approved_experiments"}
+    finally:
+        os.close(lock_fd)
+
+
+def main() -> int:
+    try:
+        outcome = consume()
+    except (OSError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
+        print("slipcage-experiment-consumer: " + type(exc).__name__, file=sys.stderr)
+        return 2
+    # Only a bounded summary goes to journal; raw evidence stays private.
+    print(json.dumps(outcome, sort_keys=True))
+    return 1 if outcome["status"] == "failed" else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

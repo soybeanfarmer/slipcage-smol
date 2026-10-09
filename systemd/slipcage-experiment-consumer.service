@@ -1,0 +1,39 @@
+[Unit]
+Description=Consume one reviewed fixed Slipcage experiment from approved release
+After=local-fs.target
+ConditionPathExists=/dev/kvm
+ConditionPathExists=/usr/local/lib/slipcage/experiment-v1.cpio.gz
+ConditionPathExists=/var/lib/slipcage/deployed-sha
+
+[Service]
+Type=oneshot
+User=slipcage-vmprobe
+Group=slipcage-vmprobe
+SupplementaryGroups=kvm
+ExecStart=/usr/local/bin/slipcage-guard run /usr/bin/python3 /usr/local/lib/slipcage/experiment-consumer.py
+TimeoutStartSec=5min
+UMask=0077
+StateDirectory=slipcage-guest
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+DevicePolicy=closed
+DeviceAllow=/dev/kvm rw
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+MemoryAccounting=yes
+MemoryMax=1280M
+CPUAccounting=yes
+CPUQuota=100%
+TasksMax=64
+LimitNOFILE=1024
+LimitFSIZE=1M
+KillMode=control-group

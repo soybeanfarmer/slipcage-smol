@@ -1,0 +1,12 @@
+[Unit]
+Description=Optional approved Slipcage experiment queue polling (disabled by default)
+
+[Timer]
+OnBootSec=10min
+OnUnitInactiveSec=20min
+RandomizedDelaySec=1min
+Persistent=true
+Unit=slipcage-experiment-consumer.service
+
+[Install]
+WantedBy=timers.target
