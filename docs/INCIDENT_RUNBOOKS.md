@@ -18,9 +18,9 @@ Review the "issues" array in the latest health JSON. The hourly
 check logs every snapshot and emits SLIPCAGE_HEALTH_WARNING only when
 the issue set changes; SLIPCAGE_HEALTH_RECOVERED follows resolution.
 An "inactive" one-shot service is **not** itself a failure when its
-timer is active. Do not infer remote notification delivery from the
-presence of a local warning: HTTPS delivery is opt-in and disabled by
-default.
+timer is active. Smol has **local journal warnings only**; it does not
+install an outbound HTTPS notifier or guarantee delivery to a phone,
+email account, or monitoring service.
 
 ## 1. Local backup missing, stale, invalid, or failed restore assurance
 
@@ -99,20 +99,23 @@ active. Do not delete SQLite locks, rebuild the DB or restart several
 services at once. Preserve the journal and trigger the existing
 approved recovery workflow only after understanding the root cause.
 
-## 6. Missing or failed external incident notifications
+## 6. Inspect local health warnings and recoveries
 
-    sudo python3 /usr/local/lib/slipcage/alert-dispatch.py
-    sudo systemctl status slipcage-alert-dispatch.timer --no-pager
-    sudo journalctl -u slipcage-alert-dispatch.service -n 50 --no-pager -l
+    sudo systemctl status slipcage-health.timer --no-pager
+    sudo cat /var/lib/slipcage-health/status.json
+    sudo journalctl -u slipcage-health.service -n 60 --no-pager -l
 
-The dispatcher preview is entirely local and non-transmitting.
-An inactive alert timer is normal until the user authorizes an HTTPS
-webhook and explicit opt-in. Do not paste URL credentials or complete
-webhook URLs into a public issue, logs or conversation. After separate
-authorization, investigate recent health snapshot freshness, the
-endpoint's supported JSON schema and HTTP 2xx acknowledgement.
-Delivery is at least once, not guaranteed exactly once; remote
-endpoint outages are not silently treated as successful delivery.
+Look for `SLIPCAGE_HEALTH_WARNING`, `SLIPCAGE_HEALTH_RECOVERED`,
+and the latest JSON `issues` array. A repeated issue produces a
+full status on every check even if no duplicate transition warning is
+printed. If the timer is inactive or the snapshot is stale,
+investigate the checker and its unit logs; do not alter backup or
+research data just to suppress an alert.
+
+The smol project intentionally contains **no external notification
+dispatcher**. No webhook, email, SMS, or push delivery is implied by
+a successful local health check. Adding remote delivery later requires
+separate operator approval and a reviewed implementation.
 
 ## Escalation checklist
 
