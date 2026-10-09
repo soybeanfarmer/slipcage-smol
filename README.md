@@ -64,6 +64,22 @@ For specific v0.10 operations, consult
 Historical documentation is preserved for context but may contain
 future-tense instructions from older versions.
 
+## Run QEMU advisory discovery without another VPS
+
+Open [QEMU research snapshot](https://github.com/soybeanfarmer/slipcage-smol/actions/workflows/qemu-research.yml)
+in GitHub Actions and manually run it from reviewed `main` after the
+workflow PR is merged. It searches **public QEMU/KVM advisory metadata**
+in a bounded 7-, 14-, or 30-day publication window and produces a
+short-lived SQLite/JSON research artifact. No QEMU guest launches,
+source builds, exploit execution, network scans, or original VPS
+deployment are involved. Publication backfill does not guarantee
+complete historical coverage or a newly discovered vulnerability.
+
+See [QEMU/KVM research MVP](docs/QEMU_RESEARCH_MVP.md) for exact scope,
+data limitations, acceptance checks and safe operator steps. This is
+an **on-demand research snapshot**, not a running independent smol
+server or continuous vulnerability reproduction.
+
 ## Safe local development
 
 Work on a fresh branch and use small pull requests. Python's tests are
