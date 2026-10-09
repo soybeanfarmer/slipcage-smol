@@ -90,7 +90,9 @@ fuzzing; external alert enrollment; off-server encrypted backups.
 - Existing smol binaries and data paths retain the historical
   `slipcage` names **only on their separate host**; these do not
   imply co-installation compatibility.
-- The repo retains optional disabled HTTPS notification tooling,
-  but no longer installs the unused off-server backup runner or Restic.
-  This simplification does not configure disaster recovery or authorize
-  external notifications.
+- This repo now retains only **local** systemd journal health warnings.
+  The previously dormant external HTTPS notifier and off-server backup
+  integrations have been removed from smol; it does not provide
+  remote incident notifications or disaster recovery.
+  The private `/etc/slipcage` channel directory must remain intact
+  for the fresh-host release marker.
