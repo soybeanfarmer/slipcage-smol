@@ -24,15 +24,28 @@ APPROVED = {
     "schema_version": 1, "id": "EXP-0001", "status": "approved",
     "runner": "fixed_arithmetic_sha256_v1", "cycles": 1,
 }
+BOOT_APPROVED = {
+    **APPROVED, "id": "EXP-0002", "runner": "fixed_guest_boot_v1",
+}
 
 
-def passed_evidence():
+def passed_evidence(runner_name="fixed_arithmetic_sha256_v1"):
+    cycle = {
+        "passed": True, "supervisor_exit_code": 0, "probe_exit_code": 0,
+    }
+    if runner_name == "fixed_arithmetic_sha256_v1":
+        mode = "fixed_arithmetic_sha256_v1"
+        cycle["known_answers_verified"] = True
+    elif runner_name == "fixed_guest_boot_v1":
+        mode = "benign_diskless_guest_lifecycle"
+    else:
+        raise AssertionError("unexpected runner fixture")
     return {
-        "mode": "fixed_arithmetic_sha256_v1", "requested_cycles": 1,
+        "mode": mode, "requested_cycles": 1,
         "completed_cycles": 1, "successful_cycles": 1,
         "passed": True, "network": "disabled", "persistent_guest_disk": False,
         "run_dir": "/private/guest/run-fixture",
-        "cycles": [{"passed": True, "known_answers_verified": True}],
+        "cycles": [cycle],
     }
 
 
@@ -57,9 +70,9 @@ class ExperimentConsumerTests(unittest.TestCase):
             state=self.state, owner=self.uid,
             runner=runner if runner is not None else self.fake_runner)
 
-    def fake_runner(self):
+    def fake_runner(self, runner_name):
         self.executions += 1
-        return passed_evidence()
+        return passed_evidence(runner_name)
 
     def result_files(self):
         return list((self.state / "experiment-results").glob("EXP-*.json"))
@@ -99,7 +112,7 @@ class ExperimentConsumerTests(unittest.TestCase):
         self.assertEqual(self.executions, 2)
 
     def test_previous_failed_or_interrupted_claim_is_never_retried_on_release(self):
-        self.assertEqual(self.run_once(runner=lambda: {"passed": False})["status"],
+        self.assertEqual(self.run_once(runner=lambda _runner: {"passed": False})["status"],
                          "failed")
         self.revision.write_text(SHA2 + "\n")
         self.assertEqual(self.run_once()["status"], "idle")
@@ -143,10 +156,88 @@ class ExperimentConsumerTests(unittest.TestCase):
         self.assertEqual(self.executions, 2)
         self.assertEqual(len(self.result_files()), 2)
 
+    def test_mixed_runner_queue_is_ordered_and_dispatches_exact_names(self):
+        second = self.queue / "EXP-0002.json"
+        second.write_text(json.dumps(BOOT_APPROVED))
+        seen = []
+
+        def dispatch(runner_name):
+            seen.append(runner_name)
+            return passed_evidence(runner_name)
+
+        first = self.run_once(runner=dispatch)
+        later = self.run_once(runner=dispatch)
+        self.assertEqual(first["experiment_id"], "EXP-0001")
+        self.assertEqual(first["outcome"], "known_answers_verified")
+        self.assertEqual(later["experiment_id"], "EXP-0002")
+        self.assertEqual(later["runner"], "fixed_guest_boot_v1")
+        self.assertEqual(later["outcome"], "guest_boot_verified")
+        self.assertEqual(seen, ["fixed_arithmetic_sha256_v1", "fixed_guest_boot_v1"])
+        self.assertEqual(self.run_once(runner=dispatch)["status"], "idle")
+
+    def test_runner_names_map_only_to_hardcoded_lifecycle_profiles(self):
+        driver = self.root / "driver.py"
+        driver.write_text(
+            "def run_lifecycle(cycles, *, profile):\n"
+            "    return {'cycles': cycles, 'profile': profile}\n"
+        )
+        with patch.object(consumer, "DRIVER", driver):
+            arithmetic = consumer.fixed_guest_runner("fixed_arithmetic_sha256_v1")
+            boot = consumer.fixed_guest_runner("fixed_guest_boot_v1")
+            with self.assertRaises(ValueError):
+                consumer.fixed_guest_runner("arbitrary_runner")
+        self.assertEqual(arithmetic, {"cycles": 1, "profile": "experiment"})
+        self.assertEqual(boot, {"cycles": 1, "profile": "boot"})
+
+    def test_boot_evidence_fails_closed_on_forged_success_invariants(self):
+        base = passed_evidence("fixed_guest_boot_v1")
+        valid, outcome = consumer.validate_evidence("fixed_guest_boot_v1", base)
+        self.assertTrue(valid)
+        self.assertEqual(outcome, "guest_boot_verified")
+
+        cases = []
+        for field, value in (
+            ("mode", "fixed_arithmetic_sha256_v1"),
+            ("network", "enabled"),
+            ("persistent_guest_disk", True),
+            ("completed_cycles", 0),
+            ("successful_cycles", 0),
+            ("passed", False),
+        ):
+            evidence = json.loads(json.dumps(base))
+            evidence[field] = value
+            cases.append(evidence)
+        evidence = json.loads(json.dumps(base))
+        evidence["cycles"] = []
+        cases.append(evidence)
+        for field in ("supervisor_exit_code", "probe_exit_code"):
+            evidence = json.loads(json.dumps(base))
+            evidence["cycles"][0][field] = 1
+            cases.append(evidence)
+
+        for evidence in cases:
+            with self.subTest(evidence=evidence):
+                valid, outcome = consumer.validate_evidence(
+                    "fixed_guest_boot_v1", evidence
+                )
+                self.assertFalse(valid)
+                self.assertEqual(outcome, "missing_or_failed_boot_evidence")
+
+    def test_failed_boot_is_not_retried_after_release_change(self):
+        self.manifest.write_text(json.dumps({
+            **BOOT_APPROVED, "id": "EXP-0001",
+        }))
+        failed = self.run_once(runner=lambda _runner: {"passed": False})
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(failed["outcome"], "missing_or_failed_boot_evidence")
+        self.revision.write_text(SHA2 + "\n")
+        self.assertEqual(self.run_once()["status"], "idle")
+        self.assertEqual(self.executions, 0)
+
     def test_failed_item_does_not_block_next_approved_item(self):
         (self.queue / "EXP-0002.json").write_text(
             json.dumps({**APPROVED, "id": "EXP-0002"}))
-        failed = self.run_once(runner=lambda: {"passed": False})
+        failed = self.run_once(runner=lambda _runner: {"passed": False})
         self.assertEqual(failed["status"], "failed")
         subsequent = self.run_once()
         self.assertEqual(subsequent["status"], "passed")
@@ -163,7 +254,7 @@ class ExperimentConsumerTests(unittest.TestCase):
         self.assertIn("ValueError", errors.getvalue())
 
     def test_failure_not_rerun_and_provenance_preserved(self):
-        failed = self.run_once(runner=lambda: {"passed": True})
+        failed = self.run_once(runner=lambda _runner: {"passed": True})
         self.assertEqual(failed["status"], "failed")
         self.assertEqual(failed["outcome"], "missing_or_failed_fixed_guest_evidence")
         self.assertEqual(self.run_once()["status"], "idle")
@@ -172,10 +263,10 @@ class ExperimentConsumerTests(unittest.TestCase):
     def test_fake_success_without_known_answers_is_not_accepted(self):
         evidence = passed_evidence()
         evidence["cycles"][0]["known_answers_verified"] = False
-        self.assertEqual(self.run_once(runner=lambda: evidence)["status"], "failed")
+        self.assertEqual(self.run_once(runner=lambda _runner: evidence)["status"], "failed")
 
     def test_failed_exception_message_not_written_to_results(self):
-        def fault():
+        def fault(_runner):
             raise RuntimeError("do not leak secrets to repo or journal")
         saved = self.run_once(runner=fault)
         self.assertEqual(saved["status"], "failed")
