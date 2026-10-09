@@ -117,6 +117,28 @@ class SmolChannelTests(unittest.TestCase):
         self.assertIn("Unexpected Git remote", deploy)
         self.assertNotIn('REPO="soybeanfarmer/slipcage"', deploy)
 
+    def test_approved_releases_refresh_bootstrap_installed_puller(self):
+        """Prevent retaining an outdated puller across approved releases."""
+        playbook = (ROOT / "playbooks" / "site.yml").read_text()
+        self.assertIn("Refresh release puller from approved CI-validated snapshot",
+                      playbook)
+        block = playbook.split(
+            "    - name: Refresh release puller from approved CI-validated snapshot",
+            1)[1].split("\n    - name: ", 1)[0]
+        self.assertIn("scripts/pull-deploy.sh", block)
+        self.assertIn("dest: /usr/local/sbin/slipcage-pull-deploy", block)
+        self.assertIn("owner: root", block)
+        self.assertIn("group: root", block)
+        self.assertIn("mode: '0755'", block)
+        self.assertLess(playbook.index("Enter maintenance and drain guarded research jobs"),
+                        playbook.index("Refresh release puller from approved CI-validated snapshot"))
+        bootstrap = (ROOT / "scripts" / "bootstrap-pull.sh").read_text()
+        self.assertIn("/usr/local/sbin/slipcage-pull-deploy", bootstrap)
+        installed = (ROOT / "scripts" / "pull-deploy.sh").read_text()
+        self.assertIn('chmod 0644 "${LAST}.tmp"', installed)
+        self.assertLess(installed.index('chmod 0644 "${LAST}.tmp"'),
+                        installed.index('mv -f "${LAST}.tmp" "${LAST}"'))
+
     def test_ansible_refuses_unenrolled_or_wrong_channel_before_maintenance(self):
         site = (ROOT / "playbooks" / "site.yml").read_text()
         self.assertIn("follow: false", site)

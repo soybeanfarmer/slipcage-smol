@@ -205,6 +205,17 @@
         group: root
         mode: '0755'
 
+    - name: Refresh release puller from approved CI-validated snapshot
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/pull-deploy.sh"
+        dest: /usr/local/sbin/slipcage-pull-deploy
+        owner: root
+        group: root
+        mode: '0755'
+      # Bootstrap installs the initial puller, but every approved release
+      # must refresh it too. Atomic copy leaves an in-flight old process on
+      # its original inode; the next invocation uses this checked version.
+
     - name: Install optional QEMU analysis and build tools
       ansible.builtin.apt:
         name:
