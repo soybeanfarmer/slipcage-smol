@@ -2,8 +2,8 @@
 
 **Status: a source-only fork of the reviewed Slipcage v0.10.0 snapshot.**
 Origin tag: [soybeanfarmer/slipcage v0.10.0](https://github.com/soybeanfarmer/slipcage/releases/tag/v0.10.0),
-commit \`f356d83b8cea2500c131da78eea6325f97067065\`.
-Smol baseline: \`628b7f4290ddb1af271c49a2041a040d578a1e62\`.
+commit `f356d83b8cea2500c131da78eea6325f97067065`.
+Smol baseline: `628b7f4290ddb1af271c49a2041a040d578a1e62`.
 The two commits have the **same Git tree**, but different Git histories.
 
 ## The small vision
@@ -75,9 +75,9 @@ malicious payloads or shared-host testing.
 ## Known fork deployment hazard
 
 The v0.10.0 snapshot contains a working *original-project*
-\`scripts/pull-deploy.sh\` whose \`REPO\` remains
-\`soybeanfarmer/slipcage\`, not \`soybeanfarmer/slipcage-smol\`.
-\`scripts/bootstrap-pull.sh\` installs that deployer and timer.
+`scripts/pull-deploy.sh` whose `REPO` remains
+`soybeanfarmer/slipcage`, not `soybeanfarmer/slipcage-smol`.
+`scripts/bootstrap-pull.sh` installs that deployer and timer.
 **Do not run bootstrap, Ansible playbooks or a release-promotion
 workflow on a production VPS from this fork as if it is an independent
 smol deployment.** Changing the repository target is a *separate*
@@ -86,5 +86,5 @@ rollback planning, backups and explicit operator approval.
 
 Original software source has been preserved unchanged on this first
 documentation/audit PR. Existing historical guides remain under
-\`docs/\`; they describe individual milestone implementations and
+`docs/`; they describe individual milestone implementations and
 are not the canonical current-state overview.
