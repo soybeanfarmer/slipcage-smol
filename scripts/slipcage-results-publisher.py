@@ -11,6 +11,7 @@ from datetime import datetime
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import pwd
@@ -25,12 +26,19 @@ SOURCE = Path("/var/lib/slipcage-guest/experiment-results")
 STATE = Path("/var/lib/slipcage-results-publisher")
 ARITHMETIC_RUNNER = "fixed_arithmetic_sha256_v1"
 BOOT_RUNNER = "fixed_guest_boot_v1"
+RESOURCE_RUNNER = "fixed_resource_observation_v1"
+RESOURCE_KEYS = ("wall_seconds", "cpu_user_seconds",
+                 "cpu_system_seconds", "qemu_peak_rss_kib")
+RESOURCE_MAX_WALL_SECONDS = 60.0
+RESOURCE_MAX_CPU_SECONDS = 60.0
+RESOURCE_MAX_RSS_KIB = 768 * 1024
 RECORD = re.compile(r"(EXP-[0-9]{4})-([a-f0-9]{64})\.json\Z")
 SHA40 = re.compile(r"[a-f0-9]{40}\Z")
 SHA64 = re.compile(r"[a-f0-9]{64}\Z")
 ALLOWED = {"schema_version", "experiment_id", "approved_release_sha",
            "manifest_sha256", "runner", "status", "outcome",
-           "claimed_utc", "finished_utc", "run_dir", "failure_type"}
+           "claimed_utc", "finished_utc", "run_dir", "failure_type",
+           "resource_observation"}
 OUTCOMES = {
     ARITHMETIC_RUNNER: {
         "passed": {"known_answers_verified"},
@@ -39,6 +47,10 @@ OUTCOMES = {
     BOOT_RUNNER: {
         "passed": {"guest_boot_verified"},
         "failed": {"missing_or_failed_boot_evidence", "runner_exception"},
+    },
+    RESOURCE_RUNNER: {
+        "passed": {"resource_bounds_verified"},
+        "failed": {"missing_or_failed_resource_evidence", "runner_exception"},
     },
 }
 MAX_FILE = 8192
@@ -60,6 +72,23 @@ def stamp(value):
     except ValueError as exc:
         raise PublishError("Bad timestamp") from exc
     return dt.isoformat(timespec="seconds")
+
+
+def sanitize_resource_observation(value):
+    if not isinstance(value, dict) or set(value) != set(RESOURCE_KEYS):
+        raise PublishError("Invalid resource observation")
+    for key in RESOURCE_KEYS:
+        item = value.get(key)
+        if (type(item) not in (int, float) or isinstance(item, bool)
+                or not math.isfinite(item) or item < 0):
+            raise PublishError("Invalid resource observation")
+    if (value["wall_seconds"] > RESOURCE_MAX_WALL_SECONDS
+            or value["cpu_user_seconds"] + value["cpu_system_seconds"]
+                > RESOURCE_MAX_CPU_SECONDS
+            or type(value["qemu_peak_rss_kib"]) is not int
+            or value["qemu_peak_rss_kib"] > RESOURCE_MAX_RSS_KIB):
+        raise PublishError("Resource observation exceeds fixed bounds")
+    return {key: value[key] for key in RESOURCE_KEYS}
 
 
 def sanitize(value, filename):
@@ -90,13 +119,21 @@ def sanitize(value, filename):
     started, ended = stamp(value.get("claimed_utc")), stamp(value.get("finished_utc"))
     if datetime.fromisoformat(ended) < datetime.fromisoformat(started):
         raise PublishError("Reversed timestamps")
-    return {
+    observation = value.get("resource_observation")
+    if runner == RESOURCE_RUNNER and status == "passed":
+        observation = sanitize_resource_observation(observation)
+    elif observation is not None:
+        raise PublishError("Unexpected resource observation")
+    report = {
         "schema_version": 1, "experiment_id": ident,
         "approved_release_sha": rev, "manifest_sha256": digest,
         "runner": runner, "status": status, "outcome": outcome,
         "claimed_utc": started, "finished_utc": ended,
         "evidence": "self-reported fixed guest result; requires human review",
     }
+    if observation is not None:
+        report["resource_observation"] = observation
+    return report
 
 
 def output_bytes(report):
