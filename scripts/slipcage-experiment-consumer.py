@@ -32,6 +32,7 @@ MAX_MANIFESTS = 500
 MAX_MANIFEST_BYTES = 4096
 MAX_RESULT_FILES = 2000
 MAX_RESULT_BYTES = 8192
+MAX_CYCLES = 3
 
 
 def utc_now() -> str:
@@ -71,7 +72,8 @@ def read_manifest(path: Path, *, owner: int = 0) -> tuple[dict, str]:
             or path.name != item["id"] + ".json"
             or item["status"] != "approved"
             or item["runner"] != ALLOWED_RUNNER
-            or type(item["cycles"]) is not int or item["cycles"] != 1):
+            or type(item["cycles"]) is not int
+            or not 1 <= item["cycles"] <= MAX_CYCLES):
         raise ValueError("Experiment is not a supported, approved fixed workload")
     return item, hashlib.sha256(raw).hexdigest()
 
@@ -130,13 +132,13 @@ def prior_claims(directory: Path, *, owner: int) -> set[tuple[str, str]]:
     return seen
 
 
-def fixed_guest_runner() -> dict:
-    """Always invoke the installed fixed controller: no manifest-driven code."""
+def fixed_guest_runner(cycles: int = 1) -> dict:
+    """Invoke only the installed fixed controller with a bounded cycle count."""
     loader = SourceFileLoader("slipcage_fixed_guest", str(DRIVER))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.run_lifecycle(1, profile="experiment")
+    return module.run_lifecycle(cycles, profile="experiment")
 
 
 def publish_json(destination: Path, value: dict) -> None:
@@ -216,26 +218,28 @@ def consume(*, queue: Path = QUEUE, revision_file: Path = REVISION,
                 "approved_release_sha": revision,
                 "manifest_sha256": digest,
                 "runner": ALLOWED_RUNNER,
+                "cycles": definition["cycles"],
                 "claimed_utc": start,
             }
             if not claim(destination, {**base, "status": "claimed"}):
                 # Preserve incomplete claims for review; never automatically retry.
                 continue
             try:
-                evidence = (runner if runner is not None else fixed_guest_runner)()
+                evidence = (runner if runner is not None else fixed_guest_runner)(definition["cycles"])
                 valid = (isinstance(evidence, dict)
                          and evidence.get("mode") == ALLOWED_RUNNER
-                         and evidence.get("requested_cycles") == 1
-                         and evidence.get("completed_cycles") == 1
-                         and evidence.get("successful_cycles") == 1
+                         and evidence.get("requested_cycles") == definition["cycles"]
+                         and evidence.get("completed_cycles") == definition["cycles"]
+                         and evidence.get("successful_cycles") == definition["cycles"]
                          and evidence.get("passed") is True
                          and evidence.get("network") == "disabled"
                          and evidence.get("persistent_guest_disk") is False
                          and isinstance(evidence.get("cycles"), list)
-                         and len(evidence["cycles"]) == 1
-                         and isinstance(evidence["cycles"][0], dict)
-                         and evidence["cycles"][0].get("passed") is True
-                         and evidence["cycles"][0].get("known_answers_verified") is True)
+                         and len(evidence["cycles"]) == definition["cycles"]
+                         and all(isinstance(cycle, dict)
+                                 and cycle.get("passed") is True
+                                 and cycle.get("known_answers_verified") is True
+                                 for cycle in evidence["cycles"]))
                 result = {**base, "status": "passed" if valid else "failed",
                           "finished_utc": utc_now(),
                           "outcome": "known_answers_verified" if valid
