@@ -131,6 +131,23 @@ class LocalOnlyAlertBoundaryTests(unittest.TestCase):
         self.assertIn("PrivateNetwork=yes", unit)
         self.assertIn("Unit=slipcage-health.service", timer)
 
+    def test_benign_manual_guest_runtime_is_still_packaged(self):
+        site = (ROOT / "playbooks/site.yml").read_text()
+        for pkg in ("qemu-system-x86", "busybox-static", "cpio"):
+            self.assertIn("          - " + pkg, site)
+        probe = (ROOT / "scripts/slipcage-kvm-probe.py").read_text()
+        self.assertIn('QEMU = "/usr/bin/qemu-system-x86_64"', probe)
+        for filename in ("build-microguest.sh", "build-experiment-guest.sh"):
+            builder = (ROOT / "scripts" / filename).read_text()
+            self.assertIn("busybox-static is required", builder)
+            self.assertIn("cpio is required", builder)
+        for unit in ("slipcage-experiment@.service",
+                     "slipcage-guest-cycles@.service"):
+            text = (ROOT / "systemd" / unit).read_text()
+            self.assertIn("PrivateNetwork=yes", text)
+            self.assertIn("DeviceAllow=/dev/kvm rw", text)
+            self.assertNotIn("WantedBy=", text)
+
     def test_no_remote_notifier_is_installed_or_scheduled(self):
         playbook = (ROOT / "playbooks/site.yml").read_text()
         for path in (
