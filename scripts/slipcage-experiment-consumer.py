@@ -262,7 +262,11 @@ def main() -> int:
         return 2
     # Only a bounded summary goes to journal; raw evidence stays private.
     print(json.dumps(outcome, sort_keys=True))
-    return 1 if outcome["status"] == "failed" else 0
+    # A failed *experiment* is still a completed, durably recorded queue item.
+    # Exit cleanly so OnUnitInactiveSec schedules the next manifest. Actual
+    # consumer/manifest failures return 2 above; deployment guard failures
+    # remain nonzero and must not be masked by systemd SuccessExitStatus.
+    return 0
 
 
 if __name__ == "__main__":
