@@ -128,6 +128,11 @@ def claim(destination: Path, value: dict) -> bool:
         stream.write("\n")
         stream.flush()
         os.fsync(stream.fileno())
+    parent_fd = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(parent_fd)
+    finally:
+        os.close(parent_fd)
     return True
 
 

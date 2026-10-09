@@ -83,6 +83,17 @@ class ExperimentConsumerTests(unittest.TestCase):
         self.assertEqual(len(self.result_files()), 2)
         self.assertEqual(self.executions, 2)
 
+    def test_two_approved_manifests_run_in_deterministic_queue_order(self):
+        second = self.queue / "EXP-0002.json"
+        second.write_text(json.dumps({**APPROVED, "id": "EXP-0002"}))
+        first = self.run_once()
+        later = self.run_once()
+        self.assertEqual(first["experiment_id"], "EXP-0001")
+        self.assertEqual(later["experiment_id"], "EXP-0002")
+        self.assertEqual(self.run_once()["status"], "idle")
+        self.assertEqual(self.executions, 2)
+        self.assertEqual(len(self.result_files()), 2)
+
     def test_failure_not_rerun_and_provenance_preserved(self):
         failed = self.run_once(runner=lambda: {"passed": True})
         self.assertEqual(failed["status"], "failed")
