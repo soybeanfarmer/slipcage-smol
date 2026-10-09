@@ -76,7 +76,6 @@
           - python3
           - python3-venv
           - python3-pip
-          - restic
           - busybox-static
           - cpio
           - sqlite3
@@ -611,37 +610,13 @@
         group: root
         mode: '0644'
 
-    - name: Restrict offsite-credential directory
+    - name: Protect private smol release-channel and optional alert configuration
       ansible.builtin.file:
         path: /etc/slipcage
         state: directory
         owner: root
         group: root
         mode: '0700'
-
-    - name: Install opt-in encrypted offsite backup runner
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../scripts/slipcage-offsite-backup.sh"
-        dest: /usr/local/sbin/slipcage-offsite-backup
-        owner: root
-        group: root
-        mode: '0750'
-
-    - name: Install disabled-by-default encrypted backup service
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../systemd/slipcage-offsite-backup.service"
-        dest: /etc/systemd/system/slipcage-offsite-backup.service
-        owner: root
-        group: root
-        mode: '0644'
-
-    - name: Install disabled-by-default encrypted backup timer
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../systemd/slipcage-offsite-backup.timer"
-        dest: /etc/systemd/system/slipcage-offsite-backup.timer
-        owner: root
-        group: root
-        mode: '0644'
 
     - name: Reload systemd for opt-in units without enabling them
       ansible.builtin.systemd_service:
