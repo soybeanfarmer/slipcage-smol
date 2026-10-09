@@ -434,6 +434,47 @@
         group: root
         mode: '0644'
 
+    - name: Install reviewed fixed experiment consumer
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/slipcage-experiment-consumer.py"
+        dest: /usr/local/lib/slipcage/experiment-consumer.py
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Remove previous release's approved experiment manifests only
+      ansible.builtin.file:
+        path: /usr/local/lib/slipcage/experiments
+        state: absent
+
+    - name: Create root-owned approved experiment manifest directory
+      ansible.builtin.file:
+        path: /usr/local/lib/slipcage/experiments
+        owner: root
+        group: root
+        state: directory
+        mode: '0755'
+
+    - name: Install approved experiment manifests from the release snapshot
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "/usr/local/lib/slipcage/experiments/{{ item | basename }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop: "{{ query('fileglob', playbook_dir + '/../experiments/EXP-*.json') }}"
+
+    - name: Install sandboxed experiment consumer and optional timer
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../systemd/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - slipcage-experiment-consumer.service
+        - slipcage-experiment-consumer.timer
+
     - name: Install read-only guest evidence audit tool
       ansible.builtin.copy:
         src: "{{ playbook_dir }}/../scripts/slipcage-experiment-audit.py"
@@ -566,5 +607,6 @@
         msg:
           - "Advisory discovery/review timers retired; research is operator-led."
           - "Old SQLite and reports preserved; new backups contain reports only."
+          - "Approved experiment consumer installed; timer disabled until operator opts in."
           - "Check: systemctl list-timers 'slipcage-*' --no-pager"
 

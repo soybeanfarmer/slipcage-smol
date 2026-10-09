@@ -82,5 +82,8 @@ git -C "${REPOSITORY}" archive "${sha}" | tar -x -C "${stage}"
 # On failure the last-deployed marker is NOT advanced.
 ansible-playbook -i "${INVENTORY}" "${stage}/playbooks/site.yml"
 printf '%s\n' "${sha}" > "${LAST}.tmp"
+# The approved Git commit SHA is public, not a secret. The unprivileged
+# fixed experiment consumer reads it to pin result provenance to this release.
+chmod 0644 "${LAST}.tmp"
 mv -f "${LAST}.tmp" "${LAST}"
 echo "Slipcage deployed release ${tag} (${sha})"

@@ -174,7 +174,12 @@ def consume(*, queue: Path = QUEUE, revision_file: Path = REVISION,
                          and evidence.get("successful_cycles") == 1
                          and evidence.get("passed") is True
                          and evidence.get("network") == "disabled"
-                         and evidence.get("persistent_guest_disk") is False)
+                         and evidence.get("persistent_guest_disk") is False
+                         and isinstance(evidence.get("cycles"), list)
+                         and len(evidence["cycles"]) == 1
+                         and isinstance(evidence["cycles"][0], dict)
+                         and evidence["cycles"][0].get("passed") is True
+                         and evidence["cycles"][0].get("known_answers_verified") is True)
                 result = {**base, "status": "passed" if valid else "failed",
                           "finished_utc": utc_now(),
                           "outcome": "known_answers_verified" if valid
