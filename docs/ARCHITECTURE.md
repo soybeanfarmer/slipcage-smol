@@ -1,61 +1,52 @@
-# Slipcage architecture
+# Slipcage Smol — current architecture
 
-```mermaid
-flowchart TD
-    A[GitHub Advisories and NVD metadata] --> B[Scheduled Dagu discover workflow]
-    B --> C[Python coordinator and SQLite]
-    C --> D{In-scope advisory?}
-    D -->|No| E[Discard candidate]
-    D -->|Yes| F[Priority scoring and deduplication]
-    F --> G[Dagu research queue - concurrency 1]
-    G --> H[Metadata-only report worker]
-    H --> I[Private Markdown artifacts]
-    J[SSH tunnel] --> K[Dagu dashboard loopback only]
-    K --> B
-    K --> G
+The development VPS is an execution environment for **human-selected
+and Git-reviewed experiments**. It is not a vulnerability discovery or
+advisory-triage agent.
+
+```text
+Human research and code review
+              |
+      GitHub Smol repository
+              |
+Manually approved release + CI
+              |
+       VPS pull deployer
+              |
+  Restricted manual benign guest probes
+              |
+   Local logs, evidence and reports
 ```
 
-## Trust boundaries
+## Active services
 
-1. **Control plane**: Dagu runs as the non-root `isolab` user under a systemd cgroup. Dashboard binds to loopback and requires a builtin administrator account. Anyone with access to edit workflows could execute commands as this user; treat dashboard access as shell-equivalent.
-2. **Public input**: feed data is untrusted. The Python coordinator has a fixed allowlist of keywords for relevance, stores data in a SQLite database, hashes opaque candidate IDs, and never executes supplied code or shell strings.
-3. **Worker**: v0.1 runs only safe metadata review; no Docker socket, KVM access, or guest VM. The worker cannot elevate to root through the chosen service configuration.
-4. **Artifact storage**: SQLite and reports are private (`/srv/isolab`, permissions 0700). Backups and retention/quotas are not provided yet.
-5. **Escapes**: guest-to-host escape reproduction would target the VPS's nested VM host, potentially threatening the outer hypervisor. Such jobs are disabled pending explicit authorization and suitable isolation.
+- `slipcage-pull-deploy.timer`: checks approved Smol releases.
+  Runs Ansible only for GitHub commits validated by CI.
+- `slipcage-backup.timer`: creates verified daily reports-only
+  snapshots, preserving old format-1 SQLite/reports backups.
+- `slipcage-assurance.timer`: restores a recent backup in
+  disposable scratch and verifies consistency.
+- `slipcage-health.timer`: emits local journal alerts and records
+  backup/assurance, free-space, failed-unit and guest-artifact status.
+- Benign KVM microguest/systemd templates: manual only, unprivileged,
+  diskless, networkless and bounded by systemd resource limits.
 
-## Capacity starting points
+`slipcage-discover.*`, `slipcage-review.*`, Dagu and the automatic
+SQLite candidate queue are **not active or installed** after the
+advisory retirement release. The previous `research.sqlite3` stays
+dormant as historical data and is preserved in a final verified
+format-1 backup; no scheduled service requires it.
 
-Host: 6 vCPU, 12 GiB RAM, 180 GB NVMe. Dagu process-tree budget: 5 CPU-equivalents and 10 GiB RAM, leaving ~2 GiB RAM for OS and overhead. `metadata` and `research` queues each have concurrency 1. There is no active fuzzing, so these limits are ceilings rather than predicted loads. Future fuzzing should have stricter job-level limits, disk quotas, and snapshots.
+## Future experiment producer/consumer (not yet implemented)
 
-## Future job statuses
+A GitHub-reviewed experiment specification should bind a fixed,
+allowlisted runner to a content-addressed commit and explicit
+resource/time limits. A restricted consumer could record attempts
+in a lightweight ledger and produce reproducible local result JSON.
+Only reviewed, sanitized results should be proposed back to GitHub
+via a narrowly scoped bot/PR. This architecture **does not** imply
+arbitrary shell execution from Git, a public GitHub writer credential
+or automatic guest attacks.
 
-`discovered -> deduplicated -> prioritized -> queued -> triaged -> [approved build/experiments] -> validated / invalid / needs-review`
-
-Starter implements `pending -> queued -> reviewed` only. It does not classify a crash as an escape or claim the presence of a vulnerability. Failures during execution may leave `queued` items that require a manual review/reset; automatic reconciliation is deferred.
-
-## Roadmap
-
-- Phase 0 (this package): repeatable deployment, localhost UI, discovery, scoring, bounded queue, safe reports.
-- Phase 1: artifact cleanup, alerting, health and performance metrics, read-only code/patch diffing, synthetic regression fixtures.
-- Phase 2: permitted isolated QEMU source builds, virtual-device fuzzing, container scanning, crash triage, fixed-corpus testing.
-- Phase 3: separately authorized escape validation on an appropriate sacrificial host, disclosure workflow, and a searchable findings UI (PocketBase optional).
-
-## Documentation and release references
-
-- https://docs.dagu.sh/getting-started/installation/linux
-- https://docs.dagu.sh/server-admin/queues
-- https://docs.dagu.sh/server-admin/authentication/builtin
-- https://github.com/dagucloud/dagu/releases/tag/v2.18.1
-- https://www.qemu.org/docs/master/devel/testing/fuzzing.html
-- https://docs.github.com/en/rest/security-advisories/global-advisories
-- https://nvd.nist.gov/developers/vulnerabilities
-
-## Deployment barrier
-
-Each reviewed DAG calls a shared-lock wrapper for the entire experiment.
-Ansible creates a maintenance marker, prevents new experiments, waits for
-all existing experiments to drain under an exclusive lock, applies updates,
-flushes service restarts, checks service health, and resumes. A timeout
-aborts the update; a later failure leaves maintenance enabled. Some queued
-or scheduled jobs may need reconciliation; this is a requirement before
-automating long-lived research experiments.
+See [README](../README.md), [backup operations](BACKUPS.md) and
+[scope](SMOL_SCOPE.md). The original v0.10 architecture is historical.

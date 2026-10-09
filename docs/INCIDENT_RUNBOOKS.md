@@ -35,7 +35,7 @@ A "recent_manifest_present" condition only establishes that a backup
 directory and well-formed manifest exist, not that restoration works.
 The weekly scratch restore verifies real local backups under bounded
 CPU, memory, time and scratch disk. If it reports failure, do **not**
-replace the research SQLite database, lower retention, or alter
+replace historical research SQLite files, lower retention, or alter
 existing backup snapshots. Diagnose disk space, backup size gates,
 integrity errors and incomplete scratch leftovers. Escalate
 before rerunning a costly restore repeatedly. A backup is still
@@ -86,18 +86,19 @@ Do not try to bypass the review/approval gate, manually change the
 deployed SHA file or run an unreviewed branch on production.
 Capture relevant logs and request review before reattempting.
 
-## 5. Dagu, review-recovery, or scheduled service failure
+## 5. Retired advisory units still appear failed
 
-    sudo systemctl status isolab-dagu.service --no-pager
-    sudo systemctl status slipcage-recover.timer --no-pager
-    sudo journalctl -u isolab-dagu.service -n 60 --no-pager -l
-    sudo journalctl -u slipcage-recover.service -n 60 --no-pager -l
+The discovery and review timers were removed as part of the
+manual-experiment-lab simplification. They must not be restarted or
+reinstalled. Use read-only diagnostics first:
 
-Prioritize understanding whether the metadata-only research database
-has valid reviews and whether an existing guard/maintenance lock is
-active. Do not delete SQLite locks, rebuild the DB or restart several
-services at once. Preserve the journal and trigger the existing
-approved recovery workflow only after understanding the root cause.
+    sudo systemctl --failed --no-pager
+    sudo systemctl list-timers --all 'slipcage-*' --no-pager
+    sudo journalctl -u slipcage-pull-deploy.service -n 60 --no-pager
+
+A failed-state record for a removed unit is not evidence the new
+backup/health schedule is broken. Do not touch historical research
+SQLite or reports just to clear a stale status.
 
 ## 6. Inspect local health warnings and recoveries
 

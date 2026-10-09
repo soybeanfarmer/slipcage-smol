@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Consistent SQLite snapshots and bounded local report backups for Slipcage.
+"""Bounded reports-only backups and read-only verification of legacy SQLite snapshots.
 
-No writes to the live research database; no archive extraction during verification.
-Backups on the same VPS are NOT disaster recovery against loss of that VPS.
+Format 1 legacy database/report backup sets remain verifiable. Format 2 stores
+only flat research reports; the retired SQLite queue is no longer required.
+Local backups do NOT protect against total VPS loss.
 """
 from __future__ import annotations
 
@@ -26,6 +27,7 @@ DEFAULT_DB = Path("/srv/isolab/research.sqlite3")
 DEFAULT_REPORTS = Path("/srv/isolab/reports")
 DEFAULT_DEST = Path("/var/backups/slipcage")
 BACKUP_NAME = re.compile(r"^backup-\d{8}T\d{12}Z$")
+REPORT_BACKUP_NAME = re.compile(r"^reports-\d{8}T\d{12}Z$")
 MAX_REPORT_BYTES = 128 * 1024 * 1024
 MAX_REPORTS_TOTAL = 512 * 1024 * 1024
 FREE_MARGIN = 256 * 1024 * 1024
@@ -95,15 +97,16 @@ def verify_backup(backup: Path) -> dict:
     if not backup.is_dir() or backup.is_symlink():
         raise ValueError("Backup directory missing or symlinked")
     manifest = json.loads((backup / "manifest.json").read_text(encoding="utf-8"))
-    if manifest.get("format") != 1 or set(manifest.get("files", {})) != {
-        "research.sqlite3", "reports.tar.gz"
-    }:
+    version = manifest.get("format")
+    allowed = ({"research.sqlite3", "reports.tar.gz"} if version == 1
+               else {"reports.tar.gz"} if version == 2 else None)
+    if allowed is None or set(manifest.get("files", {})) != allowed:
         raise ValueError("Unsupported backup manifest")
     for name, expected in manifest["files"].items():
         file = backup / name
         if not file.is_file() or file.is_symlink() or digest(file) != expected:
             raise ValueError(f"Backup checksum/size mismatch: {name}")
-    if check_sqlite(backup / "research.sqlite3") != manifest.get("candidates"):
+    if version == 1 and check_sqlite(backup / "research.sqlite3") != manifest.get("candidates"):
         raise ValueError("SQLite snapshot count differs from manifest")
 
     count = 0
@@ -125,8 +128,11 @@ def verify_backup(backup: Path) -> dict:
             count += 1
     if count != manifest.get("report_count"):
         raise ValueError("Report count differs from backup manifest")
-    return {"backup": str(backup), "candidates": manifest["candidates"],
-            "reports": count, "verified": True}
+    result = {"backup": str(backup), "reports": count, "verified": True,
+              "format": version}
+    if version == 1:
+        result["candidates"] = manifest["candidates"]
+    return result
 
 
 def prune(destination: Path, keep: int) -> int:
@@ -188,6 +194,57 @@ def create_backup(db: Path, reports: Path, destination: Path, *,
         return result
 
 
+def create_reports_backup(reports: Path, destination: Path, *,
+                          keep: int = 14, now: datetime | None = None) -> dict:
+    """Atomic, reports-only snapshot; never prunes legacy database archives."""
+    if not 1 <= keep <= 90:
+        raise ValueError("Backup retention must be between 1 and 90 snapshots")
+    destination.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if destination.is_symlink():
+        raise ValueError("Backup destination must not be a symlink")
+    os.chmod(destination, 0o700)
+    with (destination / ".backup.lock").open("a+b") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        files = report_files(reports)
+        estimated = sum(p.stat().st_size for p in files)
+        if shutil.disk_usage(destination).free < estimated + FREE_MARGIN:
+            raise ValueError("Insufficient free disk for safe local backup")
+        moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        final = destination / ("reports-" + moment.strftime("%Y%m%dT%H%M%S%fZ"))
+        if final.exists():
+            raise FileExistsError(f"Backup already exists: {final}")
+        stage = Path(tempfile.mkdtemp(dir=destination, prefix=".incomplete-"))
+        try:
+            count = archive_reports(reports, files, stage / "reports.tar.gz")
+            manifest = {
+                "format": 2,
+                "created_utc": moment.isoformat(),
+                "report_count": count,
+                "files": {"reports.tar.gz": digest(stage / "reports.tar.gz")},
+            }
+            (stage / "manifest.json").write_text(
+                json.dumps(manifest, sort_keys=True, indent=2) + "\n",
+                encoding="utf-8")
+            os.chmod(stage, 0o700)
+            result = verify_backup(stage)
+            os.replace(stage, final)
+            result["backup"] = str(final)
+        except BaseException:
+            shutil.rmtree(stage, ignore_errors=True)
+            raise
+        # Preserve all format-1 'backup-*' snapshots as a migration archive.
+        completed = sorted(
+            (p for p in destination.iterdir()
+             if p.is_dir() and not p.is_symlink()
+             and REPORT_BACKUP_NAME.fullmatch(p.name)),
+            key=lambda p: p.name, reverse=True,
+        )
+        for old in completed[keep:]:
+            shutil.rmtree(old)
+        result["pruned"] = max(0, len(completed) - keep)
+        return result
+
+
 def main(argv=None):
     cli = argparse.ArgumentParser(description=__doc__)
     commands = cli.add_subparsers(dest="command", required=True)
@@ -196,6 +253,10 @@ def main(argv=None):
     create.add_argument("--reports", type=Path, default=DEFAULT_REPORTS)
     create.add_argument("--destination", type=Path, default=DEFAULT_DEST)
     create.add_argument("--keep", type=int, default=14)
+    reports_only = commands.add_parser("create-reports")
+    reports_only.add_argument("--reports", type=Path, default=DEFAULT_REPORTS)
+    reports_only.add_argument("--destination", type=Path, default=DEFAULT_DEST)
+    reports_only.add_argument("--keep", type=int, default=14)
     verify = commands.add_parser("verify")
     verify.add_argument("backup_dir", type=Path)
     args = cli.parse_args(argv)
@@ -204,6 +265,9 @@ def main(argv=None):
         if args.command == "create":
             result = create_backup(args.db, args.reports, args.destination,
                                    keep=args.keep)
+        elif args.command == "create-reports":
+            result = create_reports_backup(args.reports, args.destination,
+                                           keep=args.keep)
         else:
             result = verify_backup(args.backup_dir)
     except (OSError, sqlite3.Error, ValueError, tarfile.TarError, json.JSONDecodeError) as exc:

@@ -147,8 +147,7 @@ class GuestLifecycleTests(unittest.TestCase):
         self.assertNotIn("enabled: true", playbook.split(
             "- name: Install manual only nested guest cycle template")[1].split(
             "\n    - name: ", 1)[0])
-        self.assertNotIn("slipcage-guest-cycles@", (
-            ROOT / "scripts" / "discover.sh").read_text())
+        self.assertFalse((ROOT / "scripts" / "discover.sh").exists())
 
     def test_existing_kvm_boot_is_fixed_and_not_general_payload(self):
         source = PATH.read_text()

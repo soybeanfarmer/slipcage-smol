@@ -27,16 +27,14 @@ ASSURANCE_STATUS = Path("/var/lib/slipcage-assurance/status.json")
 MAX_ASSURANCE_AGE_H = 10 * 24
 ACTIVE_SERVICES = ()
 ACTIVE_TIMERS = (
-    "slipcage-discover.timer", "slipcage-review.timer",
     "slipcage-backup.timer", "slipcage-pull-deploy.timer",
     "slipcage-assurance.timer",
 )
 FAILED_UNITS = (
-    "slipcage-discover.service", "slipcage-review.service",
     "slipcage-backup.service", "slipcage-pull-deploy.service",
     "slipcage-assurance.service",
 )
-BACKUP_PATTERN = re.compile(r"^backup-\d{8}T\d{12}Z$")
+BACKUP_PATTERN = re.compile(r"^(?:backup|reports)-\d{8}T\d{12}Z$")
 GUEST_PATTERN = re.compile(r"^run-\d{8}T\d{12}Z-[a-zA-Z0-9_]+$")
 FAULT_PATTERN = re.compile(r"^drill-\d{8}T\d{12}Z-[a-zA-Z0-9_]+$")
 SHA_PATTERN = re.compile(r"^[a-f0-9]{40}$")
@@ -70,7 +68,7 @@ def backup_check(root: Path, now: datetime) -> dict:
     try:
         snapshots = sorted(
             (p for p in root.iterdir() if BACKUP_PATTERN.fullmatch(p.name)
-             and not p.is_symlink() and p.is_dir()), key=lambda p: p.name,
+             and not p.is_symlink() and p.is_dir()), key=lambda p: p.name.split("-", 1)[1],
             reverse=True,
         )
     except OSError:
@@ -79,7 +77,7 @@ def backup_check(root: Path, now: datetime) -> dict:
         return {"ok": False, "reason": "no_completed_backup"}
     latest = snapshots[0]
     try:
-        stamp = datetime.strptime(latest.name, "backup-%Y%m%dT%H%M%S%fZ").replace(
+        stamp = datetime.strptime(latest.name.split("-", 1)[1], "%Y%m%dT%H%M%S%fZ").replace(
             tzinfo=timezone.utc
         )
         age = (now - stamp).total_seconds() / 3600
@@ -90,8 +88,11 @@ def backup_check(root: Path, now: datetime) -> dict:
         # A manifest must be syntactically valid with expected structure;
         # this is NOT a backup checksum verification or restore drill.
         obj = json.loads(manifest.read_text(encoding="utf-8"))
-        valid = (isinstance(obj, dict) and obj.get("format") == 1 and
-                 set(obj.get("files", {})) == {"research.sqlite3", "reports.tar.gz"})
+        valid = (isinstance(obj, dict) and
+                 ((obj.get("format") == 1 and
+                   set(obj.get("files", {})) == {"research.sqlite3", "reports.tar.gz"}) or
+                  (obj.get("format") == 2 and
+                   set(obj.get("files", {})) == {"reports.tar.gz"})))
         if not valid:
             return {"ok": False, "reason": "invalid_manifest",
                     "latest": latest.name}

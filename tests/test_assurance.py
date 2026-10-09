@@ -67,6 +67,18 @@ class AssuranceTests(unittest.TestCase):
         self.assertTrue(persisted["passed"])
         self.assertEqual((self.state / "status.json").stat().st_mode & 0o777, 0o600)
 
+    def test_reports_only_scratch_restore_passes_without_sqlite_dependency(self):
+        backup.create_reports_backup(
+            self.reports, self.backups,
+            now=NOW.replace(hour=22))
+        self.db.unlink()
+        result = self.check()
+        self.assertTrue(result["passed"], result)
+        self.assertEqual(result["reports"], 1)
+        self.assertIsNone(result.get("candidates"))
+        self.assertFalse(result["live_data_modified"])
+        self.assertFalse((self.cache / "restored").exists())
+
     def test_corrupted_backup_fails_and_records_status(self):
         source = assurance.backup_latest(self.backups)
         (source / "reports.tar.gz").write_bytes(b"broken")
