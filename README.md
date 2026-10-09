@@ -103,3 +103,13 @@ summaries to GitHub as **draft pull requests**. No GitHub credential or
 publishing timer is installed automatically; only the operator can
 configure and start it. No guest console logs or host paths are
 exported. See [reviewing and publishing results](docs/EXPERIMENT_QUEUE.md).
+
+## Sequential approved queue draining
+
+The optional consumer timer can drain up to 500 Git-reviewed benign
+experiment manifests one at a time, without rerunning unchanged ones
+for unrelated releases. It remains **disabled by default** until an
+operator opts in. Only the existing fixed SHA-256/arithmetic guest
+runner is accepted; additional scenario kinds require reviewed,
+allowlisted code and cannot inject shell commands or VM images.
+See [sequential queue operations](docs/EXPERIMENT_QUEUE.md).
