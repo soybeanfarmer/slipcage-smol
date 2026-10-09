@@ -1,81 +1,62 @@
-# Simplify Slipcage Smol: Dagu to native systemd
+# Smol: replace Dagu with systemd (development server)
 
-**Status: design and inactive prototype only.** This document and
-`app/local_review.py` do not change the running v0.1.0 release.
-Do not manually invoke the prototype against a Dagu-managed production
-database or disable Dagu before the cutover gates are implemented.
+This branch **implements the cutover**, rather than preserving two
+schedulers. Smol v0.1.0 ran Dagu on the same development VPS. We
+accept breaking removal of the dashboard and Dagu workflow interface.
 
-## Target
+## After approving a new release
 
-One Ubuntu 24.04 VPS, SQLite as the authoritative research queue and
-attempt ledger, flat Markdown reports, and systemd as the sole scheduler.
-Keep the existing human-approved release/deployment boundary, per-job
-maintenance lock, daily private snapshots, bounded scratch restores,
-hourly health status, and manual-only benign guest experiments.
-No replacement web dashboard, remote notification or external queue.
+The pull deployer still checks a manually published Smol release on main,
+an approved commit and CI. Ansible then:
+1. Enters the existing deployment guard and waits for guarded jobs.
+2. Stops/disables the Dagu service and its legacy recovery timer.
+3. Removes the obsolete Dagu systemd units and binary.
+4. Installs the local bounded review worker and two native systemd
+   oneshot/timer pairs, then enables the two timers.
+5. Retains the SQLite database, reports, root-private local backups,
+   weekly scratch restore, hourly health service and manual-only benign
+   VM probes; it does not delete prior Dagu history under /var/lib/dagu.
 
-## What currently relies on Dagu
+The first scheduled review will conservatively reconcile stale legacy
+queued/running attempts. Queued attempts may delay new reviews by
+30 minutes; abandoned running attempts are reclaimed only when the
+recorded worker can be proven dead. Ambiguous work remains blocked
+and requires inspection. We intentionally do not add a data wipe.
 
-- `workflows/discover.yaml`: six-hour discovery, analyze and enqueue.
-- `workflows/review-candidate.yaml`: one attempt-fenced metadata report.
-- `workflows/smoke.yaml`: manual environment smoke.
-- `app/recovery.py`: calls `dagu enqueue`; SQLite remains authoritative
-  for candidate state, opaque attempts, retries and crash reconciliation.
-- `slipcage-recover.timer`: recovers attempts and delivers them via Dagu.
-- Ansible installs Dagu v2.18.1, its private configuration and runtime.
-  The hourly health checker currently expects `isolab-dagu.service`.
+## Native jobs
 
-## Proposed staged implementation
+- `slipcage-discover.timer`: UTC 00:17/06:17/12:17/18:17 with up to
+  2 minutes jitter. Calls `scripts/discover.sh` to fetch bounded public
+  advisory metadata and run deterministic scoring. No Dagu dispatch.
+- `slipcage-review.timer`: start 10 min after boot; runs every
+  15 min after the previous run. Processes up to three candidates
+  sequentially using SQLite attempt tokens and stable Markdown reports.
+- Both use `slipcage-guard run`, run as unprivileged `isolab`,
+  enforce systemd time/resource limits and write logs to journald.
+- The old `smoke` command is still available directly using
+  `sudo -u isolab python3 /opt/isolab/app/isolab.py smoke --output /srv/isolab/reports`.
 
-1. **Inactive review prototype (this PR):** Add a bounded local review
-   runner using existing `recovery.claim_next`, `run_review`, and
-   `recovery.reconcile`. Reuse claim tokens, stable filenames and retry
-   limits. Unit-test normal runs, process budgets, existing queues and
-   fail-closed errors. No systemd/Ansible activation in this step.
-2. **Prepare native units:** Add six-hour `slipcage-discover.timer`
-   and a bounded `slipcage-review.timer` that calls the local runner,
-   each through `slipcage-guard run` as the unprivileged `isolab`
-   account. Preserve `discover.sh` feed/analyze stages and remove only
-   its `dagu enqueue` phase. Choose an explicit UTC schedule and bounded
-   service timeouts. Make smoke available as the existing CLI.
-3. **Fail-closed v0.1.0 cutover:** Under deployment maintenance/drain,
-   inspect the SQLite outstanding `queued`/`running` attempts and
-   Dagu execution state. Refuse an ambiguous or non-empty queue; never
-   drop or silently reassign an in-flight attempt. Only on a clean
-   handoff stop/disable Dagu and its recovery timer and activate native
-   timers. Preserve existing Dagu state/logs for forensic review and
-   rollback; no recursive deletion of research data or Dagu history.
-4. **Remove Dagu dependencies:** Remove binary download, config, DAG
-   installation and Dagu service installation from the playbook after
-   the cutover is safe. Update hourly health checks and tests to require
-   the new timers rather than the Dagu daemon. Preserve the deployment
-   poller, backups, restore assurance and VM manual-only restrictions.
-5. **Test before an approved release:** Validate offline unit tests and
-   Ansible/systemd syntax. Test a fresh install and an upgrade of the
-   already deployed v0.1.0 state, including a deliberately occupied
-   queue that must refuse migration. Verify recovery following a
-   deliberately interrupted review, idempotent reports, journal
-   diagnostics, snapshot/restore integrity and no unattended VM work.
+## Basic verification
 
-## Acceptance criteria
+```bash
+sudo systemctl list-timers --all 'slipcage-*' --no-pager
+sudo systemctl is-active slipcage-discover.timer slipcage-review.timer
+sudo systemctl is-active isolab-dagu.service  # should be inactive/unknown
+sudo systemctl start slipcage-review.service
+sudo journalctl -u slipcage-review.service -n 60 --no-pager
+sudo systemctl start slipcage-discover.service
+sudo journalctl -u slipcage-discover.service -n 60 --no-pager
+sudo systemctl start slipcage-health.service
+sudo cat /var/lib/slipcage-health/status.json
+```
 
-- Same SQLite schema and report paths; existing reviewed leads stay put.
-- Six-hour advisory discovery and bounded automatic reviews work after
-  restart and reboot, with explicit run quotas and no overlapping jobs.
-- Failed/ambiguous attempts are not duplicated or discarded.
-- Native systemd units honor the existing deployment maintenance lock.
-- Backups, scratch restore, health status and release/CI checks pass.
-- Dagu service and timers are disabled; no active scheduler depends on
-  Dagu. Old Dagu state stays preserved until separately reviewed.
-- SSH and dashboard port exposure do not increase; no new web UI.
-- Migration is a new, manually approved release; never auto-deploy
-  an unreviewed branch. Keep v0.1.0 running until those gates pass.
+No web dashboard remains. Use SQLite read-only diagnostics, status JSON
+and systemd journals. Existing `/var/lib/dagu` directory is intentionally
+not deleted automatically.
 
-## Separate historical PR
+## Old PR
 
 [PR #5](https://github.com/soybeanfarmer/slipcage-smol/pull/5)
-proposes manual GitHub Actions QEMU metadata research and was written
-before the fresh Smol VPS was deployed. It changes `app/isolab.py`
-and `scripts/discover.sh`, and its deployment assumptions are stale.
-Review and reconcile it independently; do not merge it as part of the
-systemd migration or assume it is an approved release.
+predates deployment and proposed an on-demand GitHub Actions QEMU
+metadata workflow based on the old second-VPS assumption. Reassess it
+separately from this scheduler replacement.

@@ -25,14 +25,16 @@ FAULT_RUNS = Path("/var/lib/slipcage-fault")
 STATUS = Path("/var/lib/slipcage-health/status.json")
 ASSURANCE_STATUS = Path("/var/lib/slipcage-assurance/status.json")
 MAX_ASSURANCE_AGE_H = 10 * 24
-ACTIVE_SERVICES = ("isolab-dagu.service",)
+ACTIVE_SERVICES = ()
 ACTIVE_TIMERS = (
-    "slipcage-backup.timer", "slipcage-recover.timer",
-    "slipcage-pull-deploy.timer", "slipcage-assurance.timer",
+    "slipcage-discover.timer", "slipcage-review.timer",
+    "slipcage-backup.timer", "slipcage-pull-deploy.timer",
+    "slipcage-assurance.timer",
 )
 FAILED_UNITS = (
-    "slipcage-backup.service", "slipcage-recover.service",
-    "slipcage-pull-deploy.service", "slipcage-assurance.service",
+    "slipcage-discover.service", "slipcage-review.service",
+    "slipcage-backup.service", "slipcage-pull-deploy.service",
+    "slipcage-assurance.service",
 )
 BACKUP_PATTERN = re.compile(r"^backup-\d{8}T\d{12}Z$")
 GUEST_PATTERN = re.compile(r"^run-\d{8}T\d{12}Z-[a-zA-Z0-9_]+$")

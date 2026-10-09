@@ -1,0 +1,25 @@
+[Unit]
+Description=Slipcage bounded public advisory discovery (systemd-native)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=isolab
+Group=isolab
+UMask=0077
+ExecStart=/usr/local/bin/slipcage-guard run /opt/isolab/scripts/discover.sh
+TimeoutStartSec=20min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/srv/isolab
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=true
+MemoryAccounting=true
+MemoryMax=1024M
+CPUAccounting=true
+CPUQuota=100%
+TasksMax=64

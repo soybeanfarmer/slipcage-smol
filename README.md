@@ -14,16 +14,15 @@ its Git file tree exactly matches original v0.10.0 commit `f356d83`.
 We are simplifying deliberately, beginning with the documentation and
 component audit, before considering behavior changes.
 
-**Current status:** GitHub source and CI baseline only. The original
-VPS still follows `soybeanfarmer/slipcage`. Smol now has a separate
-release origin and fresh-host-only enrollment guard, but **has not been
-deployed to any VPS**.
+**Current status:** Smol v0.1.0 is installed on the single development
+VPS after a clean Ubuntu 24.04 reinstall. The next release replaces
+the inherited Dagu scheduler with native systemd timers.
 
 ## What the reviewed v0.10 baseline does
 
 | Capability | Behavior |
 | --- | --- |
-| Discover and triage | Dagu polls public GitHub/NVD advisory metadata every six hours. Fixed Python code filters, scores, deduplicates, queues and produces Markdown reviews in local SQLite/report storage. |
+| Discover and triage | Native systemd timers run six-hour GitHub/NVD advisory ingestion and bounded local SQLite-backed review jobs that produce Markdown reports. |
 | Guard operational changes | Research jobs hold a deployment guard; upgrades must drain active guarded work. |
 | Protect research data | Root-private daily verified local SQLite/report backups (retain 14 successful sets) and a weekly bounded restore into disposable local scratch space. |
 | Monitor reliability | Hourly read-only health checks for services, backup freshness, restore status, free disk space and incomplete artifacts; local systemd journal warnings. |
@@ -46,7 +45,7 @@ scratch restores remain unchanged.
 | Path | Why it exists |
 | --- | --- |
 | `app/isolab.py`, `app/intelligence.py`, `app/recovery.py` | Metadata ingestion, scoring, review reports and guarded queue recovery |
-| `workflows/` | Reviewed Dagu discovery, metadata-review and smoke definitions |
+| `app/local_review.py`, `systemd/` | Local bounded review worker and native discovery/review timers |
 | `scripts/` | Local backups, scratch restores, operator diagnostics, fixed guest lifecycle and deployment guard |
 | `systemd/` | Explicit services, resource limits, timers and disabled/manual-only templates |
 | `playbooks/site.yml` | Ubuntu 24.04 host installation and maintenance/drain boundary |
@@ -79,23 +78,17 @@ bash -n scripts/*.sh
 GitHub CI also validates Ansible/YAML syntax and **builds but never boots**
 the inert test initramfs. Review CI results before merging.
 
-### Independent release channel — **fresh host only**
+### Development deployment — approved releases only
 
-The smol deployer now targets **`soybeanfarmer/slipcage-smol`**,
-requires a root-private smol ownership marker, and accepts only
-manually approved smol releases on `main` with successful CI.
-The bootstrap refuses an existing Slipcage installation, and Ansible
-checks the marker before changing anything.
+The bootstrap enrolls a fresh Ubuntu 24.04 VPS into the
+`soybeanfarmer/slipcage-smol` release channel. The development server
+now runs Smol v0.1.0 and can be upgraded in-place with manually approved
+GitHub releases once CI validates the exact tagged commit.
 
-**Do not run** the smol bootstrap, Ansible playbook, or release
-promotion to migrate the original production VPS. Same-named systemd
-services and data paths still exist, so a side-by-side installation
-or in-place migration is not supported by this PR. No current VPS
-has been changed; an independent installation requires a *separate,
-fresh* Ubuntu 24.04 VPS, its own host validation, and operator approval.
-
-See [Independent smol deployment](docs/SMOL_DEPLOYMENT.md) for the
-refusal gates and future separate-host procedure.
+The next release switches from Dagu to systemd scheduling. No second
+VPS is needed. Research data, local backups and old Dagu history remain
+unless the operator separately chooses to delete them. The Dagu web
+dashboard will no longer be served. See [systemd transition](docs/SYSTEMD_MIGRATION.md).
 
 ## Design guardrails
 
