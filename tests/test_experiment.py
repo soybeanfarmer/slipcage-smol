@@ -27,6 +27,10 @@ def markers():
     return "\n".join(probe.EXPERIMENT_MARKERS) + "\n"
 
 
+def resource_markers():
+    return "\n".join(probe.RESOURCE_MARKERS) + "\n"
+
+
 class ControlledExperimentTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -95,6 +99,59 @@ class ControlledExperimentTests(unittest.TestCase):
         result = self.execute_mock(rc=1)
         self.assertFalse(result["experiment_passed"])
         self.assertTrue(result["known_answers_verified"])
+
+    def test_fixed_resource_observation_has_known_answers_and_hard_bounds(self):
+        command = []
+
+        def runner(args, **kwargs):
+            command.extend(args)
+            self.assertEqual(args[args.index("-nic") + 1], "none")
+            self.assertEqual(args[args.index("-m") + 1], "384")
+            self.assertEqual(args[args.index("-smp") + 1], "1")
+            self.assertNotIn("-drive", args)
+            self.assertNotIn("-netdev", args)
+            self.assertEqual(kwargs["timeout"], 75)
+            return Mock(returncode=0, stdout=resource_markers(), stderr="")
+
+        with patch.object(probe, "inspect", return_value={
+            "process_can_open_kvm": True, "qemu_binary_available": True,
+        }):
+            result = probe.run_resource_observation(
+                runner=runner, kernel_path=self.kernel, initrd_path=self.initrd
+            )
+        self.assertEqual(command[0], probe.QEMU)
+        self.assertTrue(result["resource_observation_passed"])
+        self.assertTrue(result["known_answers_verified"])
+        self.assertTrue(result["resource_bounds_verified"])
+        self.assertEqual(result["workload"], "fixed_zero32m_sha256_v1")
+        self.assertLessEqual(result["wall_seconds"], probe.RESOURCE_MAX_WALL_SECONDS)
+        self.assertLessEqual(
+            result["cpu_user_seconds"] + result["cpu_system_seconds"],
+            probe.RESOURCE_MAX_CPU_SECONDS,
+        )
+        self.assertLessEqual(result["qemu_peak_rss_kib"], probe.RESOURCE_MAX_RSS_KIB)
+
+    def test_resource_observation_rejects_missing_marker_or_exceeded_bound(self):
+        def runner(_args, **_kwargs):
+            return Mock(returncode=0, stdout=resource_markers(), stderr="")
+
+        with patch.object(probe, "inspect", return_value={
+            "process_can_open_kvm": True, "qemu_binary_available": True,
+        }):
+            with patch.object(probe, "RESOURCE_MAX_RSS_KIB", -1):
+                result = probe.run_resource_observation(
+                    runner=runner, kernel_path=self.kernel, initrd_path=self.initrd
+                )
+            missing = probe.run_resource_observation(
+                runner=lambda *_args, **_kwargs: Mock(
+                    returncode=0, stdout="SLIPCAGE_RESOURCE_V1_OK\n", stderr=""
+                ),
+                kernel_path=self.kernel, initrd_path=self.initrd,
+            )
+        self.assertFalse(result["resource_observation_passed"])
+        self.assertFalse(result["resource_bounds_verified"])
+        self.assertFalse(missing["resource_observation_passed"])
+        self.assertFalse(missing["known_answers_verified"])
 
     def test_inner_timeout_refuses_success(self):
         with patch.object(probe, "inspect", return_value={
@@ -183,6 +240,19 @@ class ControlledExperimentTests(unittest.TestCase):
                      "SLIPCAGE_EXPERIMENT_V1_OK", "exec /bin/busybox poweroff -f"):
             self.assertIn(line, source)
         self.assertIn("printf abc | /bin/busybox sha256sum", source)
+        self.assertNotIn("curl ", source)
+        self.assertNotIn("wget ", source)
+        self.assertNotIn("/dev/tcp", source)
+
+    def test_resource_guest_builder_is_fixed_bounded_and_offline(self):
+        source = (ROOT / "scripts" / "build-resource-observation-guest.sh").read_text()
+        for text in (
+            "count=32", "bytes=33554432",
+            "83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302",
+            "SLIPCAGE_RESOURCE_V1_OK", "exec /bin/busybox poweroff -f",
+        ):
+            self.assertIn(text, source)
+        self.assertIn("/bin/busybox sha256sum", source)
         self.assertNotIn("curl ", source)
         self.assertNotIn("wget ", source)
         self.assertNotIn("/dev/tcp", source)
