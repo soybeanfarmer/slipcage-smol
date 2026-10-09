@@ -34,12 +34,12 @@ exploit reproduction, fuzzers, hypervisor escapes or network scans.
 Advisory descriptions and URLs are treated as **untrusted data**, not
 commands or proof that a vulnerability exists.
 
-Optional HTTPS health notification tooling is present from v0.10,
-**but disabled** until an operator approves and configures a compatible
-endpoint. The unused Restic/off-server-backup integration has been
-**removed from smol**; encrypted off-server disaster recovery remains
-unconfigured and is not claimed by this project. Daily local backups
-and weekly scratch restores are unchanged.
+Health issues are reported **locally** in private status JSON and the
+systemd journal; smol does not install an external webhook notifier or
+send operational messages off the VPS. The unused Restic/off-server-backup
+integration has also been **removed**. Smol does **not** provide
+off-server disaster recovery. Daily local backups and weekly verified
+scratch restores remain unchanged.
 
 ## Where the code lives
 
