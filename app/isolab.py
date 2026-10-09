@@ -7,7 +7,7 @@ External advisory text is data, never a shell command.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 import html
 import json
@@ -28,6 +28,7 @@ MATCHERS = {
     "hypervisor": re.compile(r"\b(qemu|kvm|virtualbox|hyper[- ]v)\b", re.I),
     "container": re.compile(r"\b(runc|containerd|moby|docker engine|docker daemon)\b", re.I),
 }
+QEMU_SCOPE = re.compile(r"\b(qemu|kvm)\b", re.I)
 ID_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 USER_AGENT = "slipcage-metadata-research/0.1 (independent research; no PoC execution)"
 SCHEMA = """
@@ -83,11 +84,19 @@ def classify(title: str, summary: str) -> tuple[str, int] | None:
     return max(scores, key=lambda item: item[1]) if scores else None
 
 
-def record(conn: sqlite3.Connection, item: dict) -> bool:
+def record(conn: sqlite3.Connection, item: dict, *, focus: str = "all") -> bool:
+    if focus not in ("all", "qemu"):
+        raise ValueError("Unrecognized discovery focus")
+    # Explicit QEMU/KVM filter; advisory titles and summaries are inert data.
+    if focus == "qemu" and not QEMU_SCOPE.search(
+            (item["title"] or "")[:500] + "\n" + (item["summary"] or "")[:5000]):
+        return False
     track_score = classify(item["title"], item["summary"])
     if not track_score:
         return False
     track, score = track_score
+    if focus == "qemu":
+        track = "hypervisor"
     source = item["source"]
     source_id = item["source_id"]
     candidate_id = hashlib.sha256(f"{source}:{source_id}".encode()).hexdigest()
@@ -182,7 +191,151 @@ def nvd_items():
             break
 
 
-def sync(db: str) -> int:
+def nvd_item(entry: dict) -> dict | None:
+    """Extract inert NVD metadata; no URLs in records are fetched or executed."""
+    if not isinstance(entry, dict):
+        return None
+    cve = entry.get("cve")
+    if not isinstance(cve, dict) or not isinstance(cve.get("id"), str):
+        return None
+    cve_id = cve["id"]
+    descs = cve.get("descriptions") or []
+    if not isinstance(descs, list):
+        return None
+    english = next((d.get("value", "") for d in descs
+                    if isinstance(d, dict) and d.get("lang") == "en"
+                    and isinstance(d.get("value"), str)), "")
+    references = cve.get("references") or []
+    if not isinstance(references, list):
+        references = []
+    return {
+        "source": "nvd", "source_id": cve_id, "cve": cve_id,
+        "title": cve_id + ": " + english[:240], "summary": english,
+        "url": "https://nvd.nist.gov/vuln/detail/" + cve_id,
+        "published": cve.get("published"), "updated": cve.get("lastModified"),
+        "references": [ref["url"] for ref in references if isinstance(ref, dict)
+                       and isinstance(ref.get("url"), str)],
+    }
+
+
+def nvd_qemu_publications(start_day: date, end_day: date, *,
+                          fetcher=None) -> list[dict]:
+    """Bounded manual QEMU/KVM publication-date search; refuse incomplete pages.
+
+    NVD limits publication-date windows. Require <=30 inclusive days and <=
+    three 200-item pages per explicit keyword. No cross-host scanning, PoCs,
+    shell evaluation, dynamic destinations, or background polling.
+    """
+    if not isinstance(start_day, date) or not isinstance(end_day, date):
+        raise ValueError("Calendar dates required")
+    days = (end_day - start_day).days
+    if days < 0 or days > 29:
+        raise ValueError("Publication search must cover 1 to 30 inclusive days")
+    fetcher = fetcher or fetch_json
+    results = {}
+    for keyword in ("QEMU", "KVM"):
+        params = {
+            "pubStartDate": start_day.isoformat() + "T00:00:00.000+00:00",
+            "pubEndDate": end_day.isoformat() + "T23:59:59.000+00:00",
+            "keywordSearch": keyword,
+            "resultsPerPage": 200,
+        }
+        expected_total = None
+        for page in range(3):
+            params["startIndex"] = page * 200
+            data = fetcher("https://services.nvd.nist.gov/rest/json/cves/2.0?"
+                           + urlencode(params))
+            if not isinstance(data, dict):
+                raise ValueError("NVD response was not an object")
+            total = data.get("totalResults")
+            entries = data.get("vulnerabilities")
+            if type(total) is not int or total < 0 or not isinstance(entries, list):
+                raise ValueError("Invalid NVD total or vulnerabilities")
+            if expected_total is None:
+                expected_total = total
+            elif total != expected_total:
+                raise ValueError("NVD result count changed during pagination")
+            if total > 600 or len(entries) > 200:
+                raise ValueError("NVD search exceeds 600 items; choose a shorter date window")
+            expected = max(0, min(200, total - page * 200))
+            if len(entries) != expected:
+                raise ValueError("NVD page incomplete; no partial publication backfill")
+            for entry in entries:
+                item = nvd_item(entry)
+                if item and QEMU_SCOPE.search((item["title"] or "")[:500] + "\n"
+                                              + (item["summary"] or "")[:5000]):
+                    results[item["source_id"]] = item
+            if (page + 1) * 200 >= total:
+                break
+    return [results[key] for key in sorted(results)]
+
+
+def backfill_qemu(db: str, start_day: date, end_day: date, *,
+                  fetcher=None) -> int:
+    """One explicit bounded metadata batch; do not save incomplete responses."""
+    items = nvd_qemu_publications(start_day, end_day, fetcher=fetcher)
+    conn = connect(db)
+    try:
+        with conn:
+            for item in items:
+                record(conn, item, focus="qemu")
+            intelligence.analyze(conn)
+    finally:
+        conn.close()
+    print(f"qemu_backfill_candidates={len(items)} source=NVD publication_window="
+          f"{start_day.isoformat()}..{end_day.isoformat()}")
+    return 0
+
+
+def qemu_leads(db: str, *, limit: int = 15) -> int:
+    """Printable structured shortlist only; never launch review jobs or guests."""
+    if not 1 <= limit <= 25:
+        raise ValueError("Lead limit must be 1..25")
+    conn = connect(db)
+    try:
+        rows = conn.execute("""
+            SELECT c.id, c.source, c.cve, c.title, c.summary, c.status,
+                   c.reference_url,
+                   COALESCE(i.research_score, c.score) AS research_score,
+                   i.patch_refs_json
+              FROM candidates AS c
+              LEFT JOIN candidate_intelligence AS i ON i.candidate_id = c.id
+             WHERE c.track = 'hypervisor'
+               AND c.status IN ('pending','queued','reviewed')
+               AND (
+                 lower(c.title) LIKE '%qemu%' OR lower(c.title) LIKE '%kvm%'
+                 OR lower(c.summary) LIKE '%qemu%' OR lower(c.summary) LIKE '%kvm%'
+               )
+             ORDER BY research_score DESC, c.id
+             LIMIT 1000
+        """).fetchall()
+        leads = []
+        for row in rows:
+            if not QEMU_SCOPE.search((row["title"] or "")[:500] + "\n"
+                                     + (row["summary"] or "")[:5000]):
+                continue
+            leads.append({
+                "id": row["id"], "source": row["source"],
+                "cve": row["cve"], "title": row["title"][:160],
+                "research_score": row["research_score"],
+                "status": row["status"], "source_url": row["reference_url"],
+                "unverified_patch_refs": json.loads(row["patch_refs_json"] or "[]"),
+            })
+            if len(leads) == limit:
+                break
+        print(json.dumps({
+            "focus": "QEMU/KVM", "kind": "public_advisory_metadata",
+            "vulnerability_reproduced": False, "leads": leads,
+            "note": "Scores reflect research fit only; not proof of exploitable bugs.",
+        }, sort_keys=True))
+    finally:
+        conn.close()
+    return 0
+
+
+def sync(db: str, *, focus: str = "all") -> int:
+    if focus not in ("all", "qemu"):
+        raise ValueError("Unrecognized discovery focus")
     conn = connect(db)
     total = 0
     failures = 0
@@ -191,7 +344,7 @@ def sync(db: str) -> int:
             count = 0
             with conn:
                 for item in feed():
-                    if record(conn, item):
+                    if record(conn, item, focus=focus):
                         count += 1
             total += count
             print(f"{label}: matched={count}")
@@ -298,9 +451,14 @@ def status(db: str) -> int:
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
-    for name in ("sync", "analyze", "run-review", "report", "status"):
+    for name in ("sync", "analyze", "run-review", "report", "status", "backfill-qemu", "qemu-leads"):
         sub.add_parser(name).add_argument("--db", required=True)
     sub.add_parser("smoke").add_argument("--output", required=True)
+    sub.choices["sync"].add_argument("--focus", choices=("all", "qemu"), default="all")
+    backfill = sub.choices["backfill-qemu"]
+    backfill.add_argument("--start-day", type=date.fromisoformat, required=True)
+    backfill.add_argument("--end-day", type=date.fromisoformat, required=True)
+    sub.choices["qemu-leads"].add_argument("--limit", type=int, default=15)
     worker = sub.choices["run-review"]
     worker.add_argument("--output", required=True)
     worker.add_argument("--id", required=True)
@@ -311,7 +469,11 @@ def main() -> int:
     args = p.parse_args()
     try:
         if args.command == "sync":
-            return sync(args.db)
+            return sync(args.db, focus=args.focus)
+        if args.command == "backfill-qemu":
+            return backfill_qemu(args.db, args.start_day, args.end_day)
+        if args.command == "qemu-leads":
+            return qemu_leads(args.db, limit=args.limit)
         if args.command == "analyze":
             return analyze(args.db)
         if args.command == "run-review":
