@@ -48,9 +48,11 @@ malicious payloads or shared-host testing.
   assurance and hourly local health checks may run automatically;
   both are bounded and do not alter research DBs or existing backups.
 - HTTPS notification delivery is **disabled by default** and requires
-  an operator-selected compatible endpoint. Encrypted off-server
-  backup setup remains deferred: disabled units are not approval to
-  enable them.
+  an operator-selected compatible endpoint. The unused encrypted
+  off-server-backup integration has been **removed from smol**, not
+  silently enabled. Daily local snapshots and non-destructive weekly
+  scratch restore assurance remain mandatory; no off-VPS recovery is
+  claimed or configured.
 - No unapproved release or deployment. The original production VPS
   belongs to the original Slipcage deployment until the operator
   explicitly chooses and reviews an independent smol migration.
