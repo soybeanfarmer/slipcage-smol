@@ -2,10 +2,14 @@
 
 Smol uses a **Git-reviewed queue** rather than automatic CVE discovery.
 Human researchers select targets and approve executable experiments.
-The first supported producer item is `experiments/EXP-0001.json`,
+The first bundled producer item is `experiments/EXP-0001.json`,
 which names the **existing fixed arithmetic/SHA-256 microguest**
-workload. There is no arbitrary command field, dynamic script loader,
-fetch-from-URL hook, or VM image override.
+workload. The consumer also supports the separately allowlisted
+`fixed_guest_boot_v1` runner, which maps only to the existing diskless
+boot/shutdown lifecycle. No boot manifest is bundled by this change;
+scheduling one requires a separate reviewed manifest. There is no
+arbitrary command field, dynamic script loader, fetch-from-URL hook,
+or VM image override.
 
 ## Approval and delivery
 
@@ -105,9 +109,12 @@ Instead, review failures and create a new approved experiment revision.
 
 - One VPS; no message broker, dashboard, queue database or new remote
   service. Manifests are immutable for a deployed release and installed
-  root-owned. Only `fixed_arithmetic_sha256_v1` with exactly one
-  cycle is currently accepted. A new runner needs new reviewed code,
-  tests, limits, and separate authorization.
+  root-owned. Exactly two fixed runner names are accepted:
+  `fixed_arithmetic_sha256_v1` and `fixed_guest_boot_v1`, each with
+  exactly one cycle. They map to hardcoded lifecycle profiles; manifests
+  cannot choose profiles, commands, images or runtime arguments. Any
+  additional runner needs new reviewed code, tests, limits and separate
+  authorization.
 - The consumer runs as `slipcage-vmprobe` in a systemd service with
   `PrivateNetwork=yes`, no shell command evaluation, no guest network,
   no persistent guest disks and a 1280-MiB memory quota. The existing
@@ -241,9 +248,10 @@ is required.
   Commit and PR alone are not executable; the operator publishes an
   approved release, and the existing VPS puller installs it.
 - This is queue plumbing, **not arbitrary scenario execution**.
-  The only current runner remains fixed arithmetic/SHA-256 with one
-  diskless, networkless guest cycle. New scenario categories require
-  separate allowlisted runner implementations and review.
+  The approved catalog is limited to fixed arithmetic/SHA-256 and fixed
+  diskless boot/shutdown, both with one networkless guest cycle. New
+  scenario categories require separate allowlisted runner implementations
+  and review.
 
 After publishing and deploying the release containing this change,
 inspect the service and timer, then deliberately opt in once:
