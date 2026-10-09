@@ -453,6 +453,36 @@
         group: root
         mode: '0755'
 
+    - name: Install bounded experiment family planner
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/slipcage-family-expand.py"
+        dest: /usr/local/lib/slipcage/family-expand.py
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Replace previous release experiment families
+      ansible.builtin.file:
+        path: /usr/local/lib/slipcage/families
+        state: absent
+
+    - name: Create root-owned approved experiment family directory
+      ansible.builtin.file:
+        path: /usr/local/lib/slipcage/families
+        owner: root
+        group: root
+        state: directory
+        mode: '0755'
+
+    - name: Install approved experiment families from the release snapshot
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "/usr/local/lib/slipcage/families/{{ item | basename }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop: "{{ query('fileglob', playbook_dir + '/../families/FAM-*.json') }}"
+
     - name: Remove previous release's approved experiment manifests only
       ansible.builtin.file:
         path: /usr/local/lib/slipcage/experiments
@@ -474,6 +504,16 @@
         group: root
         mode: '0644'
       loop: "{{ query('fileglob', playbook_dir + '/../experiments/EXP-*.json') }}"
+
+    - name: Expand reviewed experiment families into bounded queue items
+      ansible.builtin.command:
+        argv:
+          - /usr/local/lib/slipcage/family-expand.py
+          - --families
+          - /usr/local/lib/slipcage/families
+          - --experiments
+          - /usr/local/lib/slipcage/experiments
+      changed_when: false
 
     - name: Install sandboxed experiment consumer and optional timer
       ansible.builtin.copy:
