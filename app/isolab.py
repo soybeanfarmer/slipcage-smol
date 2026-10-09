@@ -84,12 +84,47 @@ def classify(title: str, summary: str) -> tuple[str, int] | None:
     return max(scores, key=lambda item: item[1]) if scores else None
 
 
+def primary_advisory_subject(title: str, summary: str) -> str:
+    """Select the affected component headline, not incidental test context.
+
+    Linux CVEs often have a generic prefix followed by a blank line and
+    a subsystem heading. Mentioning "tested in a QEMU guest" later in the
+    body does not imply that QEMU itself is affected.
+    """
+    body = summary or ""
+    preamble = re.match(
+        r"^\s*In the Linux kernel,\s*the following vulnerability has been resolved:\s*",
+        body, flags=re.I,
+    )
+    if preamble:
+        rest = body[preamble.end():].lstrip()
+        if rest:
+            return rest.splitlines()[0].strip()[:240]
+    headline = re.sub(r"^CVE-\d{4}-\d{4,8}:\s*", "", title or "", flags=re.I)
+    return headline.strip().splitlines()[0][:240] if headline.strip() else ""
+
+
+OTHER_ARCH = re.compile(r"\b(ppc|powerpc|arm64|aarch64|s390x?|riscv|mips)\b", re.I)
+X86_ARCH = re.compile(r"\b(x86(?:_64)?|amd64|svm|vmx)\b", re.I)
+
+
+def qemu_lab_fit(subject: str) -> str:
+    """Architecture relevance for an x86-64 research lab, not vulnerability severity."""
+    other = bool(OTHER_ARCH.search(subject))
+    x86 = bool(X86_ARCH.search(subject))
+    if x86 and not other:
+        return "x86_64"
+    if other and not x86:
+        return "other_architecture"
+    return "architecture_unspecified"
+
+
 def record(conn: sqlite3.Connection, item: dict, *, focus: str = "all") -> bool:
     if focus not in ("all", "qemu"):
         raise ValueError("Unrecognized discovery focus")
-    # Explicit QEMU/KVM filter; advisory titles and summaries are inert data.
+    # An incidental body mention of a QEMU test guest is not scope evidence.
     if focus == "qemu" and not QEMU_SCOPE.search(
-            (item["title"] or "")[:500] + "\n" + (item["summary"] or "")[:5000]):
+            primary_advisory_subject(item["title"], item["summary"])):
         return False
     track_score = classify(item["title"], item["summary"])
     if not track_score:
@@ -262,8 +297,8 @@ def nvd_qemu_publications(start_day: date, end_day: date, *,
                 raise ValueError("NVD page incomplete; no partial publication backfill")
             for entry in entries:
                 item = nvd_item(entry)
-                if item and QEMU_SCOPE.search((item["title"] or "")[:500] + "\n"
-                                              + (item["summary"] or "")[:5000]):
+                if item and QEMU_SCOPE.search(primary_advisory_subject(
+                        item["title"], item["summary"])):
                     results[item["source_id"]] = item
             if (page + 1) * 200 >= total:
                 break
@@ -311,22 +346,28 @@ def qemu_leads(db: str, *, limit: int = 15) -> int:
         """).fetchall()
         leads = []
         for row in rows:
-            if not QEMU_SCOPE.search((row["title"] or "")[:500] + "\n"
-                                     + (row["summary"] or "")[:5000]):
+            subject = primary_advisory_subject(row["title"], row["summary"])
+            if not QEMU_SCOPE.search(subject):
                 continue
             leads.append({
                 "id": row["id"], "source": row["source"],
                 "cve": row["cve"], "title": row["title"][:160],
+                "affected_subsystem": subject,
+                "lab_fit": qemu_lab_fit(subject),
                 "research_score": row["research_score"],
                 "status": row["status"], "source_url": row["reference_url"],
                 "unverified_patch_refs": json.loads(row["patch_refs_json"] or "[]"),
             })
-            if len(leads) == limit:
-                break
+        # Architecture relevance comes first; research-fit score is still
+        # shown unchanged and is not an exploitability/severity score.
+        order = {"x86_64": 0, "architecture_unspecified": 1,
+                 "other_architecture": 2}
+        leads.sort(key=lambda x: (order[x["lab_fit"]], -x["research_score"], x["id"]))
+        leads = leads[:limit]
         print(json.dumps({
             "focus": "QEMU/KVM", "kind": "public_advisory_metadata",
             "vulnerability_reproduced": False, "leads": leads,
-            "note": "Scores reflect research fit only; not proof of exploitable bugs.",
+            "note": "Lab-fit ordering is heuristic for x86-64; research scores do not prove severity or exploitability.",
         }, sort_keys=True))
     finally:
         conn.close()
