@@ -168,8 +168,14 @@ class ExperimentConsumerTests(unittest.TestCase):
         ).hexdigest()
         directory = self.state / "experiment-results"
         directory.mkdir(parents=True)
-        (directory / ("EXP-0001-" + key + ".json")).write_text(
-            '{"status": "claimed"}')
+        saved = directory / ("EXP-0001-" + key + ".json")
+        saved.write_text(json.dumps({
+            "schema_version": 1, "experiment_id": definition["id"],
+            "approved_release_sha": SHA1, "manifest_sha256": digest,
+            "runner": "fixed_arithmetic_sha256_v1",
+            "status": "claimed", "claimed_utc": "2026-10-09T16:09:47+00:00",
+        }))
+        saved.chmod(0o600)
         self.assertEqual(self.run_once()["status"], "idle")
         self.assertEqual(self.executions, 0)
 

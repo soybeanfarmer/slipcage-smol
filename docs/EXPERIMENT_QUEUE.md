@@ -26,8 +26,10 @@ fetch-from-URL hook, or VM image override.
    `passed` or `failed` with release SHA, manifest SHA-256, fixed
    runner, timestamps and a path to local guest-run evidence.
 
-Every new release commit is a new explicit run identity even if the
-manifest is unchanged. Once claimed, the same identity will **not**
+Each **new experiment ID or changed manifest digest** is a new run
+identity. Publishing an unrelated release does **not** rerun unchanged
+manifests. Each result still records the approved release SHA of its
+actual execution. Once claimed, the same experiment content will **not**
 automatically retry, including after failure, interruption or reboot.
 Preserve and investigate an interrupted `claimed` record. The
 consumer's lock and the existing guest lifecycle flock prevent
@@ -86,9 +88,10 @@ opt in to periodic queue consumption:
 sudo systemctl enable --now slipcage-experiment-consumer.timer
 ```
 
-The timer is installed but **disabled by default** and polls every
-20 minutes after inactive, with jitter. Every new **manually approved
-release** may cause one fixed guest run while the timer remains enabled.
+The timer is installed but **disabled by default**. Once enabled, it
+activates approximately one minute after the preceding run finishes
+(with up to 15 seconds of jitter). New **manually approved manifest
+content** is processed automatically after the release is installed.
 To stop unattended experiments:
 
 ```bash
