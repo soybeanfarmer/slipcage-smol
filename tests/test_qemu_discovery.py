@@ -112,6 +112,7 @@ class QemuDiscoveryTests(unittest.TestCase):
         for total, items in [
             (601, [entry("CVE-2026-10001", "QEMU regression")]),
             (201, [entry("CVE-2026-10001", "QEMU regression")]),
+            (2, [entry("CVE-2026-10001", "QEMU regression")]),
         ]:
             with self.subTest(total=total):
                 with self.assertRaises(ValueError):
