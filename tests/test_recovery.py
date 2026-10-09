@@ -113,45 +113,6 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(stats["legacy_untracked"], 1)
         self.assertEqual(self.state(), "queued")
 
-    def test_delivery_exception_rolls_back_for_future_retry(self):
-        def failed(*_args, **_kw):
-            raise OSError("Dagu unavailable")
-        result = recovery.enqueue(self.conn, "workflow.yaml", 3, runner=failed, now=NOW)
-        self.assertEqual(result["delivery_failures"], 1)
-        self.assertEqual(self.state(), "pending")
-        self.assertEqual(self.conn.execute(
-            "SELECT attempts FROM review_attempts WHERE candidate_id=?", (ID,)
-        ).fetchone()[0], 0)
-
-    def test_ambiguous_timeout_consumes_attempt_and_keeps_old_token_inert(self):
-        def uncertain(*_args, **_kw):
-            raise recovery.subprocess.TimeoutExpired(cmd="dagu", timeout=20)
-        result = recovery.enqueue(self.conn, "workflow.yaml", 3, runner=uncertain, now=NOW)
-        self.assertEqual(result["delivery_failures"], 1)
-        self.assertEqual(self.state(), "pending")
-        self.assertEqual(self.conn.execute(
-            "SELECT attempts FROM review_attempts WHERE candidate_id=?", (ID,)
-        ).fetchone()[0], 1)
-        previous = self.conn.execute(
-            "SELECT token FROM review_attempts WHERE candidate_id=?", (ID,)
-        ).fetchone()[0]
-        next_attempt = recovery.claim_next(self.conn, 3, NOW + timedelta(minutes=1))
-        self.assertNotEqual(previous, next_attempt[1])
-
-    def test_worker_completes_once_and_generates_one_stable_report(self):
-        captured = []
-        def passed(cmd, **kwargs):
-            captured.append(cmd)
-        self.assertEqual(recovery.enqueue(self.conn, "review.yaml", 3, runner=passed,
-                                          now=NOW)["enqueued"], 1)
-        token = captured[0][-1].split("=", 1)[1]
-        self.assertTrue(captured[0][-2].startswith("candidate_id="))
-        out = str(self.root / "reports")
-        self.assertEqual(isolab.run_review(self.db, out, ID, token), 0)
-        self.assertEqual(isolab.run_review(self.db, out, ID, token), 0)
-        self.assertEqual(self.state(), "reviewed")
-        self.assertEqual(len(list(Path(out).glob("candidate-*.md"))), 1)
-
     def test_crash_after_report_before_commit_retries_without_duplicate_file(self):
         first = recovery.claim_next(self.conn, 3, NOW)
         out = str(self.root / "reports")

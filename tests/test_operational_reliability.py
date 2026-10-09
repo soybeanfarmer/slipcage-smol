@@ -78,7 +78,7 @@ class HealthTests(unittest.TestCase):
         result = self.inspect()
         self.assertTrue(result["healthy"], result)
         self.assertEqual(result["issues"], [])
-        self.assertEqual(result["units"]["isolab-dagu.service"], "active")
+        self.assertEqual(result["units"]["slipcage-discover.timer"], "active")
         self.assertEqual(result["backup"]["age_hours"], 12.0)
 
     def test_stale_backup_detected(self):
