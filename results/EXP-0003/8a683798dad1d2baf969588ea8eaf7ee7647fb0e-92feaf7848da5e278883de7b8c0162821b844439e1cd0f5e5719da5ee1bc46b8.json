@@ -1,0 +1,12 @@
+{
+  "approved_release_sha": "8a683798dad1d2baf969588ea8eaf7ee7647fb0e",
+  "claimed_utc": "2026-10-09T18:35:34+00:00",
+  "evidence": "self-reported fixed guest result; requires human review",
+  "experiment_id": "EXP-0003",
+  "finished_utc": "2026-10-09T18:35:38+00:00",
+  "manifest_sha256": "92feaf7848da5e278883de7b8c0162821b844439e1cd0f5e5719da5ee1bc46b8",
+  "outcome": "missing_or_failed_resource_evidence",
+  "runner": "fixed_resource_observation_v1",
+  "schema_version": 1,
+  "status": "failed"
+}
