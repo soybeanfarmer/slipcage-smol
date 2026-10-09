@@ -47,12 +47,14 @@ malicious payloads or shared-host testing.
 - Daily root-private local backups stay intact. Weekly scratch restore
   assurance and hourly local health checks may run automatically;
   both are bounded and do not alter research DBs or existing backups.
-- HTTPS notification delivery is **disabled by default** and requires
-  an operator-selected compatible endpoint. The unused encrypted
-  off-server-backup integration has been **removed from smol**, not
-  silently enabled. Daily local snapshots and non-destructive weekly
-  scratch restore assurance remain mandatory; no off-VPS recovery is
-  claimed or configured.
+- Operational warnings and recoveries are **local only**, through
+  a private health status file and the systemd journal. The dormant
+  HTTPS webhook dispatcher has been removed from smol: no outbound
+  notification delivery is configured or promised.
+- The unused encrypted off-server-backup integration remains **removed**
+  (not silently enabled). Daily local snapshots and non-destructive
+  weekly scratch restore assurance remain mandatory; no off-VPS
+  disaster recovery is claimed or configured.
 - No unapproved release or deployment. The original production VPS
   belongs to the original Slipcage deployment until the operator
   explicitly chooses and reviews an independent smol migration.
