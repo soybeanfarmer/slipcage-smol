@@ -253,7 +253,8 @@ def nvd_qemu_publications(start_day: date, end_day: date, *,
                 raise ValueError("Invalid NVD total or vulnerabilities")
             if total > 600 or len(entries) > 200:
                 raise ValueError("NVD search exceeds 600 items; choose a shorter date window")
-            if total > (page + 1) * 200 and len(entries) != 200:
+            expected = max(0, min(200, total - page * 200))
+            if len(entries) != expected:
                 raise ValueError("NVD page incomplete; no partial publication backfill")
             for entry in entries:
                 item = nvd_item(entry)
