@@ -72,17 +72,21 @@ malicious payloads or shared-host testing.
 4. Nothing in this repository should be applied to the already-running
    VPS without a separately approved migration/release plan.
 
-## Known fork deployment hazard
+## Independent smol release channel and still-forbidden migration
 
-The v0.10.0 snapshot contains a working *original-project*
-`scripts/pull-deploy.sh` whose `REPO` remains
-`soybeanfarmer/slipcage`, not `soybeanfarmer/slipcage-smol`.
-`scripts/bootstrap-pull.sh` installs that deployer and timer.
-**Do not run bootstrap, Ansible playbooks or a release-promotion
-workflow on a production VPS from this fork as if it is an independent
-smol deployment.** Changing the repository target is a *separate*
-reviewed deployment migration with new release ancestry checks,
-rollback planning, backups and explicit operator approval.
+The smol pull deployer now targets only
+`soybeanfarmer/slipcage-smol` and verifies a private, root-owned
+smol ownership marker **before GitHub polling**. Bootstrap refuses
+an existing Slipcage installation, including research data and
+deployment state. Ansible also requires the smol marker before
+installing services. The original VPS has **not** been enrolled or
+changed, and the existing application service/data paths remain
+shared-name paths: no same-host co-installation or in-place
+migration is supported.
+
+See [Independent smol deployment](SMOL_DEPLOYMENT.md). Use a
+**separate fresh host** only after approval. Do not run smol
+bootstrap, Ansible or release promotion to take over the original VPS.
 
 Original software source has been preserved unchanged on this first
 documentation/audit PR. Existing historical guides remain under
