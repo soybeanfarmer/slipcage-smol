@@ -4,12 +4,12 @@ Smol uses a **Git-reviewed queue** rather than automatic CVE discovery.
 Human researchers select targets and approve executable experiments.
 The first bundled producer item is `experiments/EXP-0001.json`,
 which names the **existing fixed arithmetic/SHA-256 microguest**
-workload. The consumer also supports the separately allowlisted
-`fixed_guest_boot_v1` runner, which maps only to the existing diskless
-boot/shutdown lifecycle. No boot manifest is bundled by this change;
-scheduling one requires a separate reviewed manifest. There is no
-arbitrary command field, dynamic script loader, fetch-from-URL hook,
-or VM image override.
+workload. The catalog also supports the separately allowlisted
+`fixed_guest_boot_v1` runner and a fixed `fixed_resource_observation_v1`
+runner. The resource runner uses its own packaged 32-MiB zero-buffer/SHA-256
+microguest and fixed host-side wall/CPU/RSS ceilings. Manifests cannot
+choose those workload sizes or ceilings. There is no arbitrary command
+field, dynamic script loader, fetch-from-URL hook, or VM image override.
 
 ## Approval and delivery
 
@@ -109,12 +109,12 @@ Instead, review failures and create a new approved experiment revision.
 
 - One VPS; no message broker, dashboard, queue database or new remote
   service. Manifests are immutable for a deployed release and installed
-  root-owned. Exactly two fixed runner names are accepted:
-  `fixed_arithmetic_sha256_v1` and `fixed_guest_boot_v1`, each with
-  exactly one cycle. They map to hardcoded lifecycle profiles; manifests
-  cannot choose profiles, commands, images or runtime arguments. Any
-  additional runner needs new reviewed code, tests, limits and separate
-  authorization.
+  root-owned. Exactly three fixed runner names are accepted:
+  `fixed_arithmetic_sha256_v1`, `fixed_guest_boot_v1`, and
+  `fixed_resource_observation_v1`, each with exactly one cycle. They map
+  to hardcoded lifecycle profiles; manifests cannot choose profiles,
+  commands, images, resource ceilings or runtime arguments. Any additional
+  runner needs new reviewed code, tests, limits and separate authorization.
 - The consumer runs as `slipcage-vmprobe` in a systemd service with
   `PrivateNetwork=yes`, no shell command evaluation, no guest network,
   no persistent guest disks and a 1280-MiB memory quota. The existing
@@ -138,7 +138,10 @@ does not start or repeat guest experiments.
 The publisher reads only private completed `EXP-*.json` records, then
 builds a brand-new public object with fixed fields: experiment ID,
 approved release SHA, manifest hash, allowed runner, status, outcome and
-UTC timestamps. It **never includes** run-directory paths, console logs,
+UTC timestamps. For the fixed resource runner only, four bounded numeric
+measurements (wall time, QEMU user/system CPU, and QEMU peak RSS) are also
+allowlisted after independent ceiling validation. It **never includes**
+run-directory paths, console logs,
 exception messages, host identity or arbitrary input fields. Failed and
 successful completed experiments are eligible; interrupted `claimed`
 records are not.
@@ -248,10 +251,10 @@ is required.
   Commit and PR alone are not executable; the operator publishes an
   approved release, and the existing VPS puller installs it.
 - This is queue plumbing, **not arbitrary scenario execution**.
-  The approved catalog is limited to fixed arithmetic/SHA-256 and fixed
-  diskless boot/shutdown, both with one networkless guest cycle. New
-  scenario categories require separate allowlisted runner implementations
-  and review.
+  The approved catalog is limited to fixed arithmetic/SHA-256, fixed
+  diskless boot/shutdown, and fixed 32-MiB resource observation, all with
+  one networkless guest cycle. New scenario categories require separate
+  allowlisted runner implementations and review.
 
 After publishing and deploying the release containing this change,
 inspect the service and timer, then deliberately opt in once:
