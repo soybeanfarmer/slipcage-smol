@@ -74,14 +74,60 @@ class ExperimentConsumerTests(unittest.TestCase):
         self.assertEqual(self.run_once()["status"], "idle")
         self.assertEqual(self.executions, 1)
 
-    def test_new_release_revision_is_new_work_and_preserves_old_result(self):
+    def test_unrelated_release_does_not_repeat_existing_experiment(self):
         self.run_once()
         self.revision.write_text(SHA2 + "\n")
         again = self.run_once()
-        self.assertEqual(again["status"], "passed")
-        self.assertEqual(again["approved_release_sha"], SHA2)
+        self.assertEqual(again["status"], "idle")
+        self.assertEqual(len(self.result_files()), 1)
+        self.assertEqual(self.executions, 1)
+
+    def test_changed_approved_manifest_runs_again_with_new_provenance(self):
+        first = self.run_once()
+        previous = first["manifest_sha256"]
+        self.revision.write_text(SHA2 + "\n")
+        # Changing the approved bytes intentionally creates new work.
+        self.manifest.write_text(json.dumps(APPROVED, indent=2) + "\n")
+        second = self.run_once()
+        self.assertEqual(second["status"], "passed")
+        self.assertEqual(second["approved_release_sha"], SHA2)
+        self.assertNotEqual(second["manifest_sha256"], previous)
         self.assertEqual(len(self.result_files()), 2)
         self.assertEqual(self.executions, 2)
+
+    def test_previous_failed_or_interrupted_claim_is_never_retried_on_release(self):
+        self.assertEqual(self.run_once(runner=lambda: {"passed": False})["status"],
+                         "failed")
+        self.revision.write_text(SHA2 + "\n")
+        self.assertEqual(self.run_once()["status"], "idle")
+        self.assertEqual(self.executions, 0)
+
+    def test_300_manifest_queue_runs_sequentially_without_duplicates(self):
+        for i in range(2, 301):
+            (self.queue / f"EXP-{i:04}.json").write_text(
+                json.dumps({**APPROVED, "id": f"EXP-{i:04}"}))
+        seen = []
+        for i in range(300):
+            result = self.run_once()
+            self.assertEqual(result["status"], "passed")
+            seen.append(result["experiment_id"])
+        self.assertEqual(seen, [f"EXP-{i:04}" for i in range(1, 301)])
+        self.assertEqual(self.executions, 300)
+        self.assertEqual(self.run_once()["status"], "idle")
+        self.revision.write_text(SHA2 + "\n")
+        self.assertEqual(self.run_once()["status"], "idle")
+        self.assertEqual(self.executions, 300)
+        self.assertEqual(len(self.result_files()), 300)
+
+    def test_bad_previous_record_fails_closed_before_running_new_work(self):
+        self.run_once()
+        saved = self.result_files()[0]
+        record = json.loads(saved.read_text())
+        record["approved_release_sha"] = SHA2
+        saved.write_text(json.dumps(record))
+        with self.assertRaises(ValueError):
+            self.run_once()
+        self.assertEqual(self.executions, 1)
 
     def test_two_approved_manifests_run_in_deterministic_queue_order(self):
         second = self.queue / "EXP-0002.json"
@@ -158,7 +204,7 @@ class ExperimentConsumerTests(unittest.TestCase):
         self.assertEqual(self.executions, 0)
 
     def test_limit_on_approved_manifest_count(self):
-        for i in range(2, 28):
+        for i in range(2, consumer.MAX_MANIFESTS + 2):
             (self.queue / f"EXP-{i:04}.json").write_text(
                 json.dumps({**APPROVED, "id": f"EXP-{i:04}"}))
         with self.assertRaises(ValueError):
@@ -179,7 +225,8 @@ class ExperimentConsumerTests(unittest.TestCase):
                       "TimeoutStartSec=5min", "slipcage-guard run"):
             self.assertIn(field, service)
         self.assertNotIn("WantedBy=", service)
-        self.assertIn("OnUnitInactiveSec=20min", timer)
+        self.assertIn("OnUnitInactiveSec=1min", timer)
+        self.assertIn("RandomizedDelaySec=15s", timer)
         self.assertIn("Install sandboxed experiment consumer and optional timer", playbook)
         self.assertIn("experiments/EXP-*.json", playbook)
         self.assertNotIn("name: slipcage-experiment-consumer.timer\n        daemon_reload", playbook)

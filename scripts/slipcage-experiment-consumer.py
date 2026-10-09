@@ -28,8 +28,10 @@ EXPERIMENT_ID = re.compile(r"EXP-[0-9]{4}\Z")
 COMMIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
 ALLOWED_RUNNER = "fixed_arithmetic_sha256_v1"
 FIELDS = {"schema_version", "id", "status", "runner", "cycles"}
-MAX_MANIFESTS = 25
+MAX_MANIFESTS = 500
 MAX_MANIFEST_BYTES = 4096
+MAX_RESULT_FILES = 2000
+MAX_RESULT_BYTES = 8192
 
 
 def utc_now() -> str:
@@ -83,6 +85,49 @@ def manifests(queue: Path = QUEUE, *, owner: int = 0) -> list[tuple[dict, str]]:
     if len(files) > MAX_MANIFESTS:
         raise ValueError("Too many approved experiment definitions")
     return [read_manifest(path, owner=owner) for path in files]
+
+
+
+def prior_claims(directory: Path, *, owner: int) -> set[tuple[str, str]]:
+    """Index durable private claims across approved releases.
+
+    A new release may add unrelated experiments or change publisher code.
+    Neither event should rerun an unchanged, already claimed experiment.
+    Keep the historic release-specific result filename for provenance and
+    compatibility with the sanitized results publisher.
+    """
+    entries = sorted(directory.iterdir())
+    if len(entries) > MAX_RESULT_FILES:
+        raise ValueError("Too many retained private experiment result records")
+    seen: set[tuple[str, str]] = set()
+    for path in entries:
+        if path.name.startswith(".result-"):
+            # A failed atomic replacement may leave a private temp file.
+            # A durable claim or completed JSON is still the source of truth.
+            continue
+        matched = re.fullmatch(r"(EXP-[0-9]{4})-([a-f0-9]{64})[.]json", path.name)
+        if not matched:
+            raise ValueError("Unexpected item in experiment result directory")
+        raw = trusted_file(path, owner=owner, max_bytes=MAX_RESULT_BYTES)
+        item = json.loads(raw)
+        if not isinstance(item, dict):
+            raise ValueError("Invalid previous result")
+        ident = item.get("experiment_id")
+        revision = item.get("approved_release_sha")
+        digest = item.get("manifest_sha256")
+        if (ident != matched.group(1)
+                or not isinstance(revision, str) or not COMMIT_SHA.fullmatch(revision)
+                or not isinstance(digest, str)
+                or not re.fullmatch(r"[a-f0-9]{64}", digest)
+                or item.get("status") not in ("claimed", "passed", "failed")):
+            raise ValueError("Invalid previous result provenance")
+        expected = hashlib.sha256(
+            (ident + ":" + revision + ":" + digest).encode("ascii")
+        ).hexdigest()
+        if expected != matched.group(2):
+            raise ValueError("Previous result filename disagrees with contents")
+        seen.add((ident, digest))
+    return seen
 
 
 def fixed_guest_runner() -> dict:
@@ -152,8 +197,14 @@ def consume(*, queue: Path = QUEUE, revision_file: Path = REVISION,
                       os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        seen = prior_claims(result_dir, owner=os.geteuid())
         for definition, digest in definitions:
-            # A new approved release revision is a new, explicit experiment run.
+            # Release changes alone do NOT re-run unchanged experiments.
+            # A changed reviewed manifest digest or a new ID is new work.
+            if (definition["id"], digest) in seen:
+                continue
+            # Retain release-specific filenames so the publisher and audit
+            # evidence still record the exact approved code revision.
             key = hashlib.sha256(
                 (definition["id"] + ":" + revision + ":" + digest).encode("ascii")
             ).hexdigest()

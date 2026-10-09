@@ -205,3 +205,58 @@ another attempt.
 enables a publishing timer.** Raw guest artifacts remain local and are
 not covered by the current reports-only backup schedule. Rotate/revoke
 the PAT if compromised.
+
+## Sequential queue draining (opt-in)
+
+This queue consumer is **one-at-a-time**, not concurrent: one reviewed
+experiment is claimed, executed and recorded per timer activation. The
+optional timer checks again approximately a minute after the previous
+invocation finishes (plus up to 15 seconds of jitter). For example,
+300 fixed benign experiments take at least five hours of timer
+intervals, in addition to guest runtime. No second daemon or worker
+is required.
+
+- The supported manifest cap is now **500** approved JSON files per
+  release, with no more than 2000 retained private result entries for
+  bounded indexing. A larger campaign requires reviewing these limits,
+  storage and retention first.
+- Deterministic filename ordering selects the next unclaimed item.
+  A durable claim **precedes** VM execution. Failed or interrupted jobs
+  are not retried automatically; the queue advances to the next item.
+- An unchanged experiment ID **and identical manifest bytes** do not
+  rerun merely because a later release was published. A new manifest
+  ID or changed manifest digest counts as new reviewed work. Each
+  result still contains the exact approved release SHA for audit.
+  Changes to whitespace alone change the digest; keep manifest
+  formatting stable and make intentional changes reviewable.
+- **Automatic queue consumption does not bypass release approval.**
+  Commit and PR alone are not executable; the operator publishes an
+  approved release, and the existing VPS puller installs it.
+- This is queue plumbing, **not arbitrary scenario execution**.
+  The only current runner remains fixed arithmetic/SHA-256 with one
+  diskless, networkless guest cycle. New scenario categories require
+  separate allowlisted runner implementations and review.
+
+After publishing and deploying the release containing this change,
+inspect the service and timer, then deliberately opt in once:
+
+```bash
+sudo systemctl cat slipcage-experiment-consumer.service --no-pager
+sudo systemctl cat slipcage-experiment-consumer.timer --no-pager
+sudo systemctl enable --now slipcage-experiment-consumer.timer
+sudo systemctl list-timers 'slipcage-experiment-consumer*' --no-pager
+```
+
+The timer will then process **one** outstanding approved manifest
+each activation, or report `idle` if none remain. To pause instantly
+between executions, disable the timer. To stop an already running
+guest, stop the service too:
+
+```bash
+sudo systemctl disable --now slipcage-experiment-consumer.timer
+# Optional emergency stop of active guest work:
+sudo systemctl stop slipcage-experiment-consumer.service
+```
+
+Keep publication of sanitized results into GitHub as a **separate,
+manual-only** operation. Do not add a GitHub token to the guest worker.

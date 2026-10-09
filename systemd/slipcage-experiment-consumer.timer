@@ -3,8 +3,8 @@ Description=Optional approved Slipcage experiment queue polling (disabled by def
 
 [Timer]
 OnBootSec=10min
-OnUnitInactiveSec=20min
-RandomizedDelaySec=1min
+OnUnitInactiveSec=1min
+RandomizedDelaySec=15s
 Persistent=true
 Unit=slipcage-experiment-consumer.service
 
