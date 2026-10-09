@@ -28,7 +28,12 @@ checked in).
 | Root files | 4 | README, SECURITY, .gitignore, Ansible config |
 
 The bloat at this baseline is mainly **documentation chronology and
-installed optional tooling**, not product SaaS features. This snapshot
+installed optional tooling**, not product SaaS features.
+
+The counts in this section describe the immutable **original v0.10.0
+baseline**, not the post-PR3 smol working tree. PR3 removes three tracked
+files and one unused package requirement. No product SaaS code was
+present at this baseline. This snapshot
 has no account/billing/tenant/marketing application code.
 
 ## What actually runs and how
@@ -45,8 +50,8 @@ has no account/billing/tenant/marketing application code.
 | Disposable guest execution | `scripts/slipcage-kvm-probe.py`, guest lifecycle, build scripts, `slipcage-guest-cycles@.service`, `slipcage-experiment@.service` | **Manual-only**, fixed benign work; no timer | **Keep separately bounded** |
 | Evidence safety | `slipcage-experiment-audit.py`, `slipcage-limits-check.py`, `slipcage-fault-drill.py`, `slipcage-fault-retention.py` | Manual-only read-only audits and guest-free drills; deletion requires explicit reviewed flags | **Keep** |
 | Optional external alerts | `slipcage-alert-dispatch.py`, alert systemd service/timer | Installed but disabled, no configured endpoint | **Deferred/optional** |
-| Optional off-server backup | `slipcage-offsite-backup.sh`, offsite systemd service/timer | Installed but disabled; user explicitly deferred encryption/destination setup | **Deferred** |
-| VPS pull deployment | `bootstrap-pull.sh`, `pull-deploy.sh`, `slipcage-pull-deploy.*` | Original VPS polls manually approved GitHub releases | **Migration review required** |
+| Off-server backup | Removed from smol (historical v0.10 included a dormant Restic runner and service/timer) | **No smol offsite implementation** | **Out of scope** |
+| VPS pull deployment | `bootstrap-pull.sh`, `pull-deploy.sh`, `slipcage-pull-deploy.*` | Smol origin only on a separately enrolled fresh host; original VPS stays separate | **Guarded; sandbox validation pending** |
 
 **Important:** "Installed" or "defined" does not mean enabled.
 The Ansible playbook also installs development/QEMU packages because
@@ -94,12 +99,12 @@ It is **not part** of advisory discovery or normal scheduled operations.
    It also promotes optional future security/fuzzing work that is
    outside the refined objective. Replacing it with a current-state
    operator overview is a safe first cleanup.
-3. **Optional surface even when disabled.** Installed but
-   unenabled offsite-backup and webhook alert services, pinned
-   restic dependency, and an optional research build toolchain
-   consume attention and sometimes packages. Removal is *not
-   automatically safe*: playbook upgrades may leave pre-existing
-   systemd units, credentials and directories behind.
+3. **Optional surface even when disabled.** The dormant
+   Restic/off-server backup script, service, timer, and package
+   requirement are removed in smol PR 3. The separately opt-in HTTPS
+   notifier and optional development toolchain are still present.
+   Review any further removal separately: deleting a source file does
+   not erase pre-existing installed units or configuration.
 4. **Monolithic installation manifest.**
    `playbooks/site.yml` wires research, backups, health, guest
    tooling and optional modules in one play. Splitting deployment
@@ -116,26 +121,30 @@ It is **not part** of advisory discovery or normal scheduled operations.
    follows releases from the original repository. Do not equate
    a passing CI run with a tested smol production migration.
 
-## Proposed small-PR sequence (not yet implemented)
+## Small-PR simplification record and next steps
 
-**PR 1 (this PR):** Audit and simplify navigation only.
+**PR 1 (merged):** Audit and simplify navigation only.
 Replace the historical README with a current-state summary;
 record the component map and permanent project scope.
 No code, tests, schemas, units, flags, or deploy targets change.
 
-**PR 2 (this follow-up PR):** Configure a distinct smol
+**PR 2 (merged):** Configure a distinct smol
 release origin and fail-closed **fresh-host-only** bootstrap gate.
 The existing server stays unchanged. Validate actual installation
 only later on a separate operator-approved disposable sandbox
 before calling independent production readiness proven.
 
-**PR 3:** Reduce optional installation only after review.
-Candidates: never-used offsite-backup files and the unconfigured
-webhook integration, or disabling heavyweight build toolchain by
-default for fresh installations. First inventory any live service,
-configuration, and necessary migrations so old installations
-are not left in an ambiguous state. **Do not remove local daily
-backups or weekly scratch restore.**
+**PR 3 (this PR):** Remove only the dormant off-server backup runner,
+its two systemd units, Ansible install tasks and unused Restic package.
+Do **not** touch local daily backups, weekly scratch restores, research
+DBs or manual guest experiments. Smol has never published a release;
+this PR does not delete any file/unit from a running host.
+
+**Future separate review:** Decide whether the disabled HTTPS notifier
+should remain as optional reliability tooling, and whether compiler/
+QEMU build dependencies should be installed only when needed. Do not
+remove existing packages/services from any host without a separate
+migration plan and live-use inventory.
 
 **PR 4:** Refactor the monolithic Ansible playbook only if it
 reduces operator burden; require syntax tests, a fresh sandbox
