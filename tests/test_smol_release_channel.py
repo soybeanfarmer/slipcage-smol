@@ -139,6 +139,23 @@ class SmolChannelTests(unittest.TestCase):
         self.assertLess(installed.index('chmod 0644 "${LAST}.tmp"'),
                         installed.index('mv -f "${LAST}.tmp" "${LAST}"'))
 
+    def test_release_rebuilds_all_fixed_guest_artifacts(self):
+        """Builder changes must take effect on the next approved release."""
+        playbook = (ROOT / "playbooks" / "site.yml").read_text()
+        for name, artifact in (
+            ("Build a disposable, networkless initramfs from distro busybox-static",
+             "/usr/local/lib/slipcage/microguest.cpio.gz"),
+            ("Build inert arithmetic and SHA-256 Linux guest image",
+             "/usr/local/lib/slipcage/experiment-v1.cpio.gz"),
+            ("Build fixed 32-MiB resource-observation Linux guest image",
+             "/usr/local/lib/slipcage/resource-v1.cpio.gz"),
+        ):
+            block = playbook.split("    - name: " + name, 1)[1].split(
+                "\n    - name: ", 1
+            )[0]
+            self.assertNotIn("creates:", block, artifact)
+            self.assertIn("changed_when: true", block, artifact)
+
     def test_ansible_refuses_unenrolled_or_wrong_channel_before_maintenance(self):
         site = (ROOT / "playbooks" / "site.yml").read_text()
         self.assertIn("follow: false", site)

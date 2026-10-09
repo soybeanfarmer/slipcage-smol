@@ -372,7 +372,7 @@
       ansible.builtin.command:
         argv:
           - /usr/local/lib/slipcage/build-microguest
-        creates: /usr/local/lib/slipcage/microguest.cpio.gz
+      changed_when: true
 
     - name: Stage running Ubuntu kernel for unprivileged microguest boot
       ansible.builtin.copy:
@@ -435,7 +435,7 @@
       ansible.builtin.command:
         argv:
           - /usr/local/lib/slipcage/build-experiment-guest
-        creates: /usr/local/lib/slipcage/experiment-v1.cpio.gz
+      changed_when: true
 
     - name: Install fixed resource-observation guest builder
       ansible.builtin.copy:
@@ -449,7 +449,7 @@
       ansible.builtin.command:
         argv:
           - /usr/local/lib/slipcage/build-resource-observation-guest
-        creates: /usr/local/lib/slipcage/resource-v1.cpio.gz
+      changed_when: true
 
     - name: Install manual controlled experiment systemd template
       ansible.builtin.copy:
