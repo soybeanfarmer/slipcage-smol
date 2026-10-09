@@ -47,15 +47,15 @@ def require_pristine(blockers=BLOCKERS) -> None:
         )
 
 
-def require_enrolled(marker: Path = MARKER) -> None:
+def require_enrolled(marker: Path = MARKER, *, expected_uid: int = 0) -> None:
     """Root-owned, regular, private and exact-channel identity only."""
     parent_info = marker.parent.lstat()
-    if not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid != 0:
+    if not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid != expected_uid:
         raise ValueError("Unsafe smol channel configuration directory")
     fd = os.open(marker, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
     with os.fdopen(fd, "rb") as stream:
         info = os.fstat(stream.fileno())
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != expected_uid or
                 stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1 or
                 info.st_size > 128):
             raise ValueError("Invalid smol channel marker metadata")
@@ -64,7 +64,7 @@ def require_enrolled(marker: Path = MARKER) -> None:
         raise ValueError("This host is not enrolled for the smol release channel")
 
 
-def enroll(*, marker: Path = MARKER, blockers=BLOCKERS) -> None:
+def enroll(*, marker: Path = MARKER, blockers=BLOCKERS, expected_uid: int = 0) -> None:
     """Enroll only an unoccupied host, and never overwrite existing state."""
     require_pristine(blockers)
     marker.parent.mkdir(mode=0o700)
@@ -73,7 +73,7 @@ def enroll(*, marker: Path = MARKER, blockers=BLOCKERS) -> None:
         out.write((CHANNEL + "\n").encode("ascii"))
         out.flush()
         os.fsync(out.fileno())
-    require_enrolled(marker)
+    require_enrolled(marker, expected_uid=expected_uid)
 
 
 def main(argv=None) -> int:
