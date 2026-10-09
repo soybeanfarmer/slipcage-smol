@@ -285,6 +285,8 @@ class ControlledExperimentTests(unittest.TestCase):
         ):
             self.assertIn(text, source)
         self.assertIn("/bin/busybox sha256sum", source)
+        self.assertIn('mknod -m 0600 "$work/root/dev/null" c 1 3', source)
+        self.assertIn('mknod -m 0600 "$work/root/dev/zero" c 1 5', source)
         self.assertNotIn("curl ", source)
         self.assertNotIn("wget ", source)
         self.assertNotIn("/dev/tcp", source)
