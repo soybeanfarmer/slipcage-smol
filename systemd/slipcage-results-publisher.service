@@ -1,0 +1,36 @@
+[Unit]
+Description=Propose one sanitized Slipcage experiment result as a GitHub draft PR
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/bin/python3 /usr/local/lib/slipcage/results-publisher.py --submit
+LoadCredential=github_token:/etc/slipcage/github-results-token
+StateDirectory=slipcage-results-publisher
+StateDirectoryMode=0700
+TimeoutStartSec=90s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+PrivateDevices=yes
+PrivateTmp=yes
+DevicePolicy=closed
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+AmbientCapabilities=
+InaccessiblePaths=-/var/lib/slipcage-guest/runs -/srv/isolab -/var/backups/slipcage -/var/lib/slipcage-fault
+ReadOnlyPaths=/var/lib/slipcage-guest/experiment-results
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryMax=192M
+CPUQuota=25%
+TasksMax=24
+LimitNOFILE=128
+LimitFSIZE=256K

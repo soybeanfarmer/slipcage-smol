@@ -117,3 +117,91 @@ Instead, review failures and create a new approved experiment revision.
 - The reports-only backup service does **not** currently back up guest
   experiment results; treat those files as local, potentially ephemeral
   evidence until a separately approved retention/export plan exists.
+
+## Sanitized results returned to GitHub (manual opt-in)
+
+The isolated `slipcage-results-publisher.service` submits **one completed
+experiment result** as a **draft pull request** per invocation. This is
+separate from the guest consumer. It never runs automatically, and it
+does not start or repeat guest experiments.
+
+The publisher reads only private completed `EXP-*.json` records, then
+builds a brand-new public object with fixed fields: experiment ID,
+approved release SHA, manifest hash, allowed runner, status, outcome and
+UTC timestamps. It **never includes** run-directory paths, console logs,
+exception messages, host identity or arbitrary input fields. Failed and
+successful completed experiments are eligible; interrupted `claimed`
+records are not.
+
+Each sanitized report goes only under `results/EXP-XXXX/` on a new
+`results/...` branch, then into a **draft PR** for human review.
+No result is written directly to `main`. A result claims to describe
+a fixed known-answer test, **not a vulnerability finding**.
+
+### Inspect without credentials (safe dry run)
+
+After deploying the approved release:
+
+```bash
+sudo python3 /usr/local/lib/slipcage/results-publisher.py --dry-run
+```
+
+This prints the *exact public allowlisted fields* for the first
+unpublished completed record. No GitHub API requests or credentials are
+used. The original guest evidence is left untouched.
+
+### Credential setup (operator action required)
+
+For the first integration, create a **fine-grained GitHub personal access
+token** restricted to the single repository
+`soybeanfarmer/slipcage-smol`, with only **Contents: read/write** and
+**Pull requests: read/write** repository permissions. Prefer a dedicated
+automation identity and short expiration. Do not grant administration,
+Actions or access to other repositories.
+
+A PAT cannot in general be limited to writing only `results/` branches,
+so apply GitHub branch protections/rulesets to `main`: require
+reviewed PRs and forbid direct pushes/bypass by the bot account. The
+publisher's fixed paths are defense in depth, not a GitHub-level
+permission boundary.
+
+Store the token **only on the VPS**, root-owned and mode 0600, in
+`/etc/slipcage/github-results-token`. Never paste it into chat, place
+it in Git, supply it via CLI arguments, or echo it to a terminal. A
+safe interactive setup that prompts without echo:
+
+```bash
+sudo bash -c 'umask 077; read -r -s -p "GitHub result token: " token; printf "\n"; printf "%s\n" "$token" > /etc/slipcage/github-results-token; unset token'
+sudo chown root:root /etc/slipcage/github-results-token
+sudo chmod 0600 /etc/slipcage/github-results-token
+```
+
+Systemd `LoadCredential` exposes the token only inside this manually
+started oneshot. The publisher has **no KVM device access**, cannot read
+the raw guest-run directory through its mount namespace, and uses
+bounded CPU, RAM and time. It needs outbound HTTPS to
+`api.github.com`, but no inbound network service.
+
+### Submit a draft PR
+
+After reviewing the dry-run output and the GitHub token permissions:
+
+```bash
+sudo systemctl start slipcage-results-publisher.service
+sudo journalctl -u slipcage-results-publisher.service -n 30 --no-pager -l
+```
+
+The journal should report `submitted` and a PR URL, or
+`already_merged` if the identical sanitized report is already on
+`main`. Review that draft and its source manifest before merging.
+
+The publisher writes private per-result receipts. Repeated runs are
+idempotent. If a network failure happens after branch creation but
+before opening the PR, retry will verify the exact blob and continue.
+If a PR is closed without merging, manual review is required before
+another attempt.
+
+**Nothing in this release supplies a token, starts a publisher, or
+enables a publishing timer.** Raw guest artifacts remain local and are
+not covered by the current reports-only backup schedule. Rotate/revoke
+the PAT if compromised.
