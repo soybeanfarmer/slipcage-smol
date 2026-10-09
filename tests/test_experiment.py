@@ -199,6 +199,36 @@ class ControlledExperimentTests(unittest.TestCase):
             self.assertEqual(cycle["qemu_resources"]["cpu_system_seconds"], 0.2)
         self.assertEqual((run_path / "summary.json").stat().st_mode & 0o777, 0o600)
 
+    def test_resource_lifecycle_collects_fixed_bounded_evidence(self):
+        data = {
+            "resource_observation_passed": True,
+            "known_answers_verified": True,
+            "resource_bounds_verified": True,
+            "workload": "fixed_zero32m_sha256_v1",
+            "network": "disabled",
+            "persistent_guest_disk": False,
+            "exit_code": 0,
+            "cpu_user_seconds": 0.7,
+            "cpu_system_seconds": 0.3,
+            "qemu_peak_rss_kib": 420000,
+            "wall_seconds": 2.5,
+        }
+        script = self.root / "fake-resource-guest.py"
+        script.write_text(
+            "import json\nprint(json.dumps(" + repr(data) + "))\n",
+            encoding="utf-8",
+        )
+        report = lifecycle.run_lifecycle(
+            1, probe=script, state=self.root / "resource-state",
+            timeout=5, profile="resource",
+        )
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["mode"], "fixed_resource_observation_v1")
+        cycle = report["cycles"][0]
+        self.assertTrue(cycle["known_answers_verified"])
+        self.assertTrue(cycle["resource_bounds_verified"])
+        self.assertEqual(cycle["qemu_resources"]["qemu_peak_rss_kib"], 420000)
+
     def test_missing_known_answer_in_probe_json_fails_closed(self):
         script = self.make_probe(valid=False)
         report = lifecycle.run_lifecycle(3, probe=script,
@@ -223,9 +253,11 @@ class ControlledExperimentTests(unittest.TestCase):
 
     def test_experiment_cycle_limit_and_profile_allowlist(self):
         for value in [4, 5, 100]:
-            with self.assertRaises(ValueError):
-                lifecycle.run_lifecycle(value, profile="experiment",
-                                        state=self.root / "state")
+            for profile in ("experiment", "resource"):
+                with self.subTest(value=value, profile=profile):
+                    with self.assertRaises(ValueError):
+                        lifecycle.run_lifecycle(value, profile=profile,
+                                                state=self.root / "state")
         with self.assertRaises(ValueError):
             lifecycle.run_lifecycle(1, profile="custom-payload",
                                     state=self.root / "state")
@@ -271,6 +303,8 @@ class ControlledExperimentTests(unittest.TestCase):
         self.assertNotIn("WantedBy=", unit)
         self.assertNotIn("RuntimeMaxSec=", unit)
         self.assertIn("Build inert arithmetic and SHA-256 Linux guest image", playbook)
+        self.assertIn("Build fixed 32-MiB resource-observation Linux guest image", playbook)
+        self.assertIn("build-resource-observation-guest.sh", playbook)
         section = playbook.split("- name: Install manual controlled experiment systemd template")[1]
         self.assertNotIn("enabled: true", section.split("\n    - name: ", 1)[0])
 
