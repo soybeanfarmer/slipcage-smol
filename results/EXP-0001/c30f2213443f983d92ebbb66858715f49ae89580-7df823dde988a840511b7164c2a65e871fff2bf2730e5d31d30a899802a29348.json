@@ -1,0 +1,12 @@
+{
+  "approved_release_sha": "c30f2213443f983d92ebbb66858715f49ae89580",
+  "claimed_utc": "2026-10-09T16:46:38+00:00",
+  "evidence": "self-reported fixed guest result; requires human review",
+  "experiment_id": "EXP-0001",
+  "finished_utc": "2026-10-09T16:46:41+00:00",
+  "manifest_sha256": "7df823dde988a840511b7164c2a65e871fff2bf2730e5d31d30a899802a29348",
+  "outcome": "known_answers_verified",
+  "runner": "fixed_arithmetic_sha256_v1",
+  "schema_version": 1,
+  "status": "passed"
+}
