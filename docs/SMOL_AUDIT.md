@@ -1,3 +1,5 @@
+> **Historical audit.** The research discovery and SQLite candidate queue have since been retired. See [README.md](../README.md) for current Smol capabilities.
+
 # Slipcage-smol repository audit
 
 **Audit scope:** exact source-tree clone of the original public

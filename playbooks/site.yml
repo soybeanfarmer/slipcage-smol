@@ -61,6 +61,78 @@
       changed_when: true
 
   tasks:
+    - name: Detect retired candidate database before stopping research
+      ansible.builtin.stat:
+        path: /srv/isolab/research.sqlite3
+        follow: false
+      register: legacy_research_db
+
+    - name: Detect previous SQLite backup helper
+      ansible.builtin.stat:
+        path: /usr/local/sbin/slipcage-backup
+      register: legacy_backup_helper
+
+    - name: Detect prior final legacy archive marker
+      ansible.builtin.stat:
+        path: /var/backups/slipcage/research-retired.snapshot-complete
+      register: research_archive_marker
+
+    - name: Require ability to preserve existing database before retiring it
+      ansible.builtin.assert:
+        that:
+          - not (legacy_research_db.stat.exists | default(false)) or (legacy_backup_helper.stat.exists | default(false)) or (research_archive_marker.stat.exists | default(false))
+        fail_msg: "Research DB exists but no prior backup helper is available; refusing retirement."
+
+    - name: Preserve final legacy research SQLite and Markdown reports snapshot
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/slipcage-backup
+          - create
+          - --db
+          - /srv/isolab/research.sqlite3
+          - --reports
+          - /srv/isolab/reports
+          - --destination
+          - /var/backups/slipcage
+          - --keep
+          - "90"
+      when:
+        - legacy_research_db.stat.isreg | default(false)
+        - legacy_backup_helper.stat.exists | default(false)
+        - not (research_archive_marker.stat.exists | default(false))
+      changed_when: true
+
+    - name: Mark successfully archived historical research
+      ansible.builtin.copy:
+        content: "Legacy research SQLite and reports archived before retirement. Do not prune format-1 backups automatically.\\n"
+        dest: /var/backups/slipcage/research-retired.snapshot-complete
+        owner: root
+        group: root
+        mode: '0600'
+      when:
+        - legacy_research_db.stat.isreg | default(false)
+        - not (research_archive_marker.stat.exists | default(false))
+
+    - name: Disable legacy discovery and review timers
+      ansible.builtin.command: systemctl disable --now slipcage-discover.timer slipcage-review.timer
+      changed_when: false
+      failed_when: false
+
+    - name: Remove obsolete discovery and review unit and application files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/slipcage-discover.timer
+        - /etc/systemd/system/slipcage-discover.service
+        - /etc/systemd/system/slipcage-review.timer
+        - /etc/systemd/system/slipcage-review.service
+        - /opt/isolab/app/isolab.py
+        - /opt/isolab/app/intelligence.py
+        - /opt/isolab/app/recovery.py
+        - /opt/isolab/app/local_review.py
+        - /opt/isolab/scripts/discover.sh
+
     - name: Stop legacy Dagu before enabling native timers
       ansible.builtin.command: systemctl disable --now isolab-dagu.service
       changed_when: false
@@ -195,54 +267,6 @@
         - { path: '/srv/isolab', owner: 'isolab', group: 'isolab', mode: '0700' }
         - { path: '/srv/isolab/reports', owner: 'isolab', group: 'isolab', mode: '0700' }
 
-    - name: Install research intelligence module
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../app/intelligence.py"
-        dest: /opt/isolab/app/intelligence.py
-        owner: root
-        group: root
-        mode: '0644'
-
-    - name: Install review attempt and recovery module
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../app/recovery.py"
-        dest: /opt/isolab/app/recovery.py
-        owner: root
-        group: root
-        mode: '0644'
-
-    - name: Install native bounded review worker
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../app/local_review.py"
-        dest: /opt/isolab/app/local_review.py
-        owner: root
-        group: root
-        mode: '0755'
-
-    - name: Install reviewed research coordinator code
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../app/isolab.py"
-        dest: /opt/isolab/app/isolab.py
-        owner: root
-        group: root
-        mode: '0755'
-
-    - name: Create application helper scripts directory
-      ansible.builtin.file:
-        path: /opt/isolab/scripts
-        state: directory
-        owner: root
-        group: root
-        mode: '0755'
-
-    - name: Install reviewed discovery script
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../scripts/discover.sh"
-        dest: /opt/isolab/scripts/discover.sh
-        owner: root
-        group: root
-        mode: '0755'
-
     - name: Install server verification helper
       ansible.builtin.copy:
         src: "{{ playbook_dir }}/../scripts/verify-server.sh"
@@ -250,19 +274,6 @@
         owner: root
         group: root
         mode: '0755'
-
-    - name: Install native discovery and review service/timer units
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../systemd/{{ item }}"
-        dest: "/etc/systemd/system/{{ item }}"
-        owner: root
-        group: root
-        mode: '0644'
-      loop:
-        - slipcage-discover.service
-        - slipcage-discover.timer
-        - slipcage-review.service
-        - slipcage-review.timer
 
     - name: Create private on-server backup directory
       ansible.builtin.file:
@@ -287,6 +298,19 @@
         owner: root
         group: root
         mode: '0644'
+
+    - name: Create first reports-only snapshot after preservation of legacy SQLite
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/slipcage-backup
+          - create-reports
+          - --reports
+          - /srv/isolab/reports
+          - --destination
+          - /var/backups/slipcage
+          - --keep
+          - "14"
+      changed_when: true
 
     - name: Install daily backup timer
       ansible.builtin.copy:
@@ -514,16 +538,6 @@
         enabled: true
         state: started
 
-    - name: Enable native discovery and review schedules
-      ansible.builtin.systemd_service:
-        name: "{{ item }}"
-        daemon_reload: true
-        enabled: true
-        state: started
-      loop:
-        - slipcage-discover.timer
-        - slipcage-review.timer
-
     - name: Protect private smol release-channel configuration
       ansible.builtin.file:
         path: /etc/slipcage
@@ -544,7 +558,7 @@
     - name: Display final message
       ansible.builtin.debug:
         msg:
-          - "Systemd now schedules metadata discovery and bounded local reviews."
-          - "Check timers: systemctl list-timers 'slipcage-*' --no-pager"
-          - "The Dagu dashboard has been retired; SQLite, reports, backups and health checks remain."
+          - "Advisory discovery/review timers retired; research is operator-led."
+          - "Old SQLite and reports preserved; new backups contain reports only."
+          - "Check: systemctl list-timers 'slipcage-*' --no-pager"
 

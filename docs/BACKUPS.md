@@ -1,66 +1,56 @@
-# Automatic research backups (v0.2.1)
+# Smol local backups: reports and historical research archive
 
-Slipcage backs up its research queue and reports **on the VPS** after an
-approved v0.2.1 release. The installation creates a root-owned private
-directory at /var/backups/slipcage (mode 0700), a systemd oneshot service,
-and a daily timer.
+The ongoing backup schedule runs daily using `slipcage-backup.service`.
+These backups are **local to the VPS** and do not protect against a lost
+disk, lost VPS, or provider/account outage.
 
-## Schedule and coverage
+## One-time migration from automatic advisory research
 
-- Daily around 03:15–04:00 UTC (randomized), including catch-up following
-  a reboot when systemd's persistent timer detects a missed run.
-- A consistent, non-destructive snapshot of
-  /srv/isolab/research.sqlite3 using Python's SQLite online backup API.
-  This works while discovery and report jobs are active, including WAL mode.
-- A best-effort archive of regular files directly under
-  /srv/isolab/reports, with a 128 MiB per-file and 512 MiB total cap.
-  The report archive is not transactionally synchronized to the database.
-- A SHA-256 manifest covering the database and report archive; verifies
-  content, opens the backup DB with SQLite integrity_check and reads the
-  archive before publishing the backup directory.
-- Retains the 14 most recent successfully verified backup sets. Failed runs
-  do not delete older backups. A separate root lock prevents overlapping runs.
-- Backup timer/service is independent of Dagu and does not block the
-  deployment/research guard. Source database is never modified by the helper.
+Before the installer removes discovery/review services on an existing
+Smol VPS, the deployment maintenance gate drains research work and
+the **previous** backup helper snapshots the final
+`/srv/isolab/research.sqlite3` and `/srv/isolab/reports` content.
 
-These backups do NOT include /var/lib/dagu workflow history, VPS OS state,
-SSH keys, provider configuration, or any future fuzzing crash corpus outside
-the reports directory. Directory nesting and symlinks in reports are rejected
-rather than silently omitted. All of these limits must be revisited before
-enabling large-scale fuzzing.
+That snapshot is verified before retirement proceeds. A root-private
+marker records successful preservation. All prior `backup-*`
+snapshots remain in `/var/backups/slipcage`, **outside the new
+retention pruner**. The legacy SQLite database itself is also left
+untouched and is no longer an active queue. The cleanup does not
+silently erase these artifacts.
+
+A fresh install with no legacy database skips this step.
+
+## New daily backups (format 2)
+
+- Root-private `/var/backups/slipcage/reports-<UTC timestamp>/`.
+- A bounded `reports.tar.gz` of regular files directly inside
+  `/srv/isolab/reports`, up to 128 MiB per file, 512 MiB combined.
+- `manifest.json` format 2: SHA-256 + byte size of the archive,
+  verified entries and report count. No SQLite dependency.
+- Retain 14 verified **format 2** snapshots. Older format 1
+  `backup-*` sets are retained and remain verifiable using
+  `slipcage-backup verify /var/backups/slipcage/backup-...`.
+- Weekly sandboxed restore assurance reconstructs the newest complete
+  archive into a disposable scratch directory. The original report
+  files are not overwritten or modified.
+- The old format 1 archive verifier and scratch restore still
+  understand historical SQLite snapshots and test their integrity.
 
 ## Operations
 
-After first deployment, trigger and inspect one full backup:
+```bash
+sudo systemctl start slipcage-backup.service
+sudo journalctl -u slipcage-backup.service -n 40 --no-pager
+sudo systemctl start slipcage-assurance.service
+sudo cat /var/lib/slipcage-assurance/status.json
+sudo ls -ld /var/backups/slipcage/reports-*
+```
 
-    sudo systemctl start slipcage-backup.service
-    sudo systemctl status slipcage-backup.service --no-pager
-    sudo journalctl -u slipcage-backup.service -n 50 --no-pager
-    sudo systemctl list-timers slipcage-backup.timer
+The latest assurance should show `"passed": true` and
+`"live_data_modified": false`. There is no unattended destructive
+restore of reports or historical research. Report archives do not
+include private guest-run evidence or arbitrary future experiment
+results unless that storage coverage is explicitly extended.
 
-List completed backups and inspect one:
-
-    sudo ls -ld /var/backups/slipcage/backup-*
-    sudo /usr/local/sbin/slipcage-backup verify \
-      /var/backups/slipcage/BACKUP_DIRECTORY_NAME
-
-An inactive (dead) state is normal for a successful oneshot backup service;
-look for status=0/SUCCESS and a verified snapshot in the logs.
-
-## Restore planning
-
-Verify a selected backup before considering recovery. Never restore it
-over a live SQLite database or active workflow. Stop or drain research
-jobs and take a separate safety copy of the current state first. Restore
-the snapshot and selected reports to an isolated staging directory, check
-their integrity, and only then perform a documented manual cutover. There
-is intentionally **no unattended destructive restore command**.
-
-## Important limitation: local storage
-
-Local backups are valuable against deletion or corruption of the database,
-but **not** against loss of the entire VPS, disk, provider, or account.
-The backup copies share the same storage failure domain as the original.
-Before collecting expensive or unpublished research findings, add encrypted
-off-server backups with independent access controls and a tested restore
-process. Do not commit research archives to the public GitHub repository.
+**There is no offsite backup.** Keep unpublished/valuable data outside
+this VPS as well, using an independently controlled encrypted copy.

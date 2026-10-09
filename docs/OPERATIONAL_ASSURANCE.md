@@ -1,3 +1,5 @@
+> **Historical guide (v0.10 era).** Active Smol no longer schedules metadata research. For current reports-only backup/assurance operations see [BACKUPS.md](BACKUPS.md). The content below documents the earlier architecture.
+
 # Slipcage-smol — Local Operational Assurance (v0.10 lineage)
 
 Smol retains v0.10's backup and health verification without
