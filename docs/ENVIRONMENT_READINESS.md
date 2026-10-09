@@ -1,9 +1,11 @@
 # Slipcage v0.4 — Research environment readiness
 
-This release prepares **manual, benign nested-virtualization testing** and an
-**opt-in** encrypted off-server backup workflow. It does **not** enable
-fuzzing, known vulnerability reproductions, scans, exploitation or automated
-guest creation. The existing Dagu research jobs and dashboard remain unchanged.
+The original v0.4 release prepared **manual, benign nested-virtualization
+testing** and formerly included a disabled, opt-in encrypted off-server
+backup helper. **Slipcage-smol deliberately removed that unused helper.**
+There is no off-server backup runner, systemd unit, or Restic dependency
+in smol. This does **not** enable fuzzing, vulnerability reproduction,
+scans, exploitation, or automated guest creation.
 
 ## Scope and provider authorization
 
@@ -71,65 +73,27 @@ boot smoke test, not endurance/stress testing or proof of security isolation.
 Both KVM units are manually started, with no timers, no DAG and no new
 public service ports.
 
-## Encrypted offsite backups (NOT enabled automatically)
+## Off-server backups — removed from smol
 
-Restic is installed with an optional systemd service and timer.
-**Nothing is transmitted** unless an operator configures an independent
-offsite storage destination, initializes an encrypted repository, tests
-credentials and explicitly enables the timer. No VPN subscription is
-required; Restic supports SFTP/SSH servers, HTTPS rest-server and supported
-object storage backends. Such storage may have separate costs.
+This historical v0.4 feature was **never enabled** for the smaller
+project. Slipcage-smol no longer includes the optional encrypted
+off-server backup runner, Restic package requirement, or dedicated
+offsite service/timer. The commands from the old v0.4 setup guide to
+start or enable an offsite service are **not applicable** to smol.
 
-All credentials belong exclusively on the VPS, not in GitHub, Dagu workflow
-parameters, a chat message or any public report.
-
-Expected on-server configuration:
-
-    /etc/slipcage/offsite.env            root:root 0600
-    /etc/slipcage/offsite-passphrase     root:root 0600
-
-Example ENVIRONMENT FILE ONLY (never commit values):
-
-    RESTIC_REPOSITORY=sftp:backup-user@backup-host:/private/slipcage
-    RESTIC_PASSWORD_FILE=/etc/slipcage/offsite-passphrase
-
-For SFTP, configure the root SSH client to use a purpose-specific key
-stored under /etc/slipcage, plus a host key explicitly verified and pinned
-out of band. With ProtectHome=yes in the systemd service, do not rely on
-/root/.ssh for SSH identity or host keys. Standard root-owned SSH config
-under /etc/ssh/ssh_config.d can refer to the key and pinned known_hosts.
-Use a storage account that cannot access the research VPS.
-
-Once a destination is selected, set up its repository and credentials
-directly via a root shell, verify the remote host identity, initialize
-the restic repository manually, and test remote restore/verification.
-Only then run:
-
-    sudo systemctl start slipcage-offsite-backup.service
-    sudo journalctl -u slipcage-offsite-backup.service -n 40 --no-pager
-
-The runner only transfers the newest **locally verified, completed**
-backup snapshot (not the live SQLite database), and refuses a snapshot
-older than 36 hours. Restic encrypts before uploading. The local source
-remains untouched.
-
-After a verified end-to-end test, explicitly opt in:
-
-    sudo systemctl enable --now slipcage-offsite-backup.timer
-    sudo systemctl list-timers slipcage-offsite-backup.timer --no-pager
-
-Its UTC schedule is around 05:15–05:45, after the local daily backup.
-The v0.4 installer leaves this timer **disabled**. Offsite retention,
-remote credentials/host-key rotation, availability alerts, and full
-disaster-recovery restore drills are not automatically configured.
-Do not assume offsite disaster recovery until a snapshot has been
-restored using an independent machine or storage destination.
+The verified daily **local** SQLite/report snapshots, the separate
+non-destructive restore checker, and bounded weekly scratch restore
+assurance remain installed. These same-VPS backups cannot recover from
+loss of the entire server. Any future independently tested off-server
+backup solution requires a new operator decision and review; no
+credentials or remote storage are configured by this repo.
 
 ## Priorities before autonomous fuzzing
 
 1. Confirm provider permission and pass manual nested guest boot checks.
 2. Exercise repeated benign boot cycles and measure resource usage.
-3. Configure encrypted offsite backups and test a real remote restore.
+3. If ever approved separately, design off-server disaster recovery
+   independently of the smol source repository; do not assume it exists.
 4. Define a disposable KVM guest image policy and snapshot/revert strategy
    with no host resources mounted inside guest workloads.
 5. Keep privileged host access, Docker socket access, and attack payloads
