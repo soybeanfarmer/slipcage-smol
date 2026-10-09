@@ -90,5 +90,7 @@ fuzzing; external alert enrollment; off-server encrypted backups.
 - Existing smol binaries and data paths retain the historical
   `slipcage` names **only on their separate host**; these do not
   imply co-installation compatibility.
-- The repo still contains opt-in, disabled notification/offsite
-  components. They do not gain permission to activate.
+- The repo retains optional disabled HTTPS notification tooling,
+  but no longer installs the unused off-server backup runner or Restic.
+  This simplification does not configure disaster recovery or authorize
+  external notifications.
