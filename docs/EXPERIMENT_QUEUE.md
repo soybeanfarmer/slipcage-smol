@@ -14,7 +14,9 @@ fetch-from-URL hook, or VM image override.
    release**. The established release puller verifies that the tagged
    commit is on `main` with successful GitHub Actions validation.
 3. Ansible installs the JSON manifests and consumer into root-owned
-   paths under `/usr/local/lib/slipcage`. A new release publishes its
+   paths under `/usr/local/lib/slipcage`. Reviewed `families/FAM-*.json`
+definitions are expanded deterministically during deployment into the same
+root-owned experiment queue; no family code runs in the guest. A new release publishes its
    commit SHA in a publicly readable, root-owned file
    `/var/lib/slipcage/deployed-sha` (the SHA is not a secret).
 4. The **unprivileged** consumer checks that exact deployed SHA and
@@ -105,8 +107,8 @@ Instead, review failures and create a new approved experiment revision.
 
 - One VPS; no message broker, dashboard, queue database or new remote
   service. Manifests are immutable for a deployed release and installed
-  root-owned. Only `fixed_arithmetic_sha256_v1` with exactly one
-  cycle is currently accepted. A new runner needs new reviewed code,
+  root-owned. Only `fixed_arithmetic_sha256_v1` with a reviewed cycle count from
+  1 through 3 is currently accepted. A new runner needs new reviewed code,
   tests, limits, and separate authorization.
 - The consumer runs as `slipcage-vmprobe` in a systemd service with
   `PrivateNetwork=yes`, no shell command evaluation, no guest network,
@@ -208,6 +210,34 @@ another attempt.
 enables a publishing timer.** Raw guest artifacts remain local and are
 not covered by the current reports-only backup schedule. Rotate/revoke
 the PAT if compromised.
+
+## Experiment Family v1
+
+A reviewed family is a **bounded deterministic producer**, not a new execution
+engine. Its schema contains only: schema version, `FAM-XXXX` ID, approved
+status, the fixed runner name, a starting `EXP-XXXX` ID, a unique list of
+cycle counts from 1 through 3, and a repetition count from 1 through 100.
+
+During an approved release deployment, the root-run planner expands all family
+definitions into ordinary strict experiment manifests before the unprivileged
+consumer sees them. The combined family expansion is capped at 500 queue
+items. Generated IDs must not overlap each other or disagree with a manually
+reviewed `experiments/EXP-*.json` manifest.
+
+The planner rejects unknown fields. There is deliberately no command, script,
+URL, guest image, network, device, kernel argument, filesystem path, or
+environment-variable input in the family schema. The consumer still invokes
+only the installed fixed arithmetic/SHA-256 lifecycle. Family planning cannot
+change the systemd sandbox or authorize a new runner.
+
+No approved family is shipped by default. Adding a `FAM-XXXX.json` file is a
+reviewable action that creates new work only after the containing commit is
+merged, manually released, and deployed. See `families/README.md` for the
+schema and an example.
+
+This v1 is intentionally a **parameter sweep**, not outcome-dependent
+adaptation. Durable adaptive state and branching rules should be a later
+reviewed layer after this deterministic producer has operational evidence.
 
 ## Sequential queue draining (opt-in)
 
