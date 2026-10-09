@@ -80,6 +80,7 @@
     - name: Require ability to preserve existing database before retiring it
       ansible.builtin.assert:
         that:
+          - not (legacy_research_db.stat.exists | default(false)) or (legacy_research_db.stat.isreg | default(false))
           - not (legacy_research_db.stat.exists | default(false)) or (legacy_backup_helper.stat.exists | default(false)) or (research_archive_marker.stat.exists | default(false))
         fail_msg: "Research DB exists but no prior backup helper is available; refusing retirement."
 
@@ -104,7 +105,7 @@
 
     - name: Mark successfully archived historical research
       ansible.builtin.copy:
-        content: "Legacy research SQLite and reports archived before retirement. Do not prune format-1 backups automatically.\\n"
+        content: "Legacy research SQLite and reports archived before retirement. Do not prune format-1 backups automatically.\n"
         dest: /var/backups/slipcage/research-retired.snapshot-complete
         owner: root
         group: root
@@ -115,6 +116,11 @@
 
     - name: Disable legacy discovery and review timers
       ansible.builtin.command: systemctl disable --now slipcage-discover.timer slipcage-review.timer
+      changed_when: false
+      failed_when: false
+
+    - name: Clear stale failed-state records for retired research workers
+      ansible.builtin.command: systemctl reset-failed slipcage-discover.service slipcage-review.service
       changed_when: false
       failed_when: false
 

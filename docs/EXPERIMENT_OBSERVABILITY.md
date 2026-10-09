@@ -1,3 +1,5 @@
+> **Historical milestone document.** The active Smol development lab has retired advisory discovery, Dagu and the candidate queue. See [README](../README.md) and [BACKUPS](BACKUPS.md) for the current services and data format.
+
 # Slipcage v0.7 — experiment observability and safety
 
 v0.7 adds **manual, read-only** analysis of private disposable guest-run

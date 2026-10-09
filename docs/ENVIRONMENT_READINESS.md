@@ -1,3 +1,5 @@
+> **Historical milestone document.** The active Smol development lab has retired advisory discovery, Dagu and the candidate queue. See [README](../README.md) and [BACKUPS](BACKUPS.md) for the current services and data format.
+
 # Slipcage v0.4 — Research environment readiness
 
 The original v0.4 release prepared **manual, benign nested-virtualization
