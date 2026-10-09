@@ -15,6 +15,31 @@
           - ansible_facts['architecture'] == 'x86_64'
         fail_msg: "Use the Ubuntu 24.04 LTS x86-64 image; adjust and test for other platforms."
 
+    - name: Require explicit Slipcage-smol bootstrap before any Ansible changes
+      ansible.builtin.stat:
+        path: /etc/slipcage/release-channel
+        follow: false
+      register: smol_channel_marker
+
+    - name: Reject hosts without a private root-owned smol channel marker
+      ansible.builtin.assert:
+        that:
+          - smol_channel_marker.stat.isreg | default(false)
+          - smol_channel_marker.stat.pw_name | default('') == 'root'
+          - smol_channel_marker.stat.mode | default('') == '0600'
+        fail_msg: "Smol playbook refuses unbootstrapped/legacy Slipcage hosts. Use a separate fresh Ubuntu 24.04 VPS."
+
+    - name: Read the existing smol channel identity
+      ansible.builtin.slurp:
+        src: /etc/slipcage/release-channel
+      register: smol_channel_contents
+
+    - name: Refuse mixed original and smol release channels
+      ansible.builtin.assert:
+        that:
+          - (smol_channel_contents.content | b64decode | trim) == 'soybeanfarmer/slipcage-smol'
+        fail_msg: "This host is not registered for the independent smol release channel."
+
     - name: Detect existing Dagu installation
       ansible.builtin.stat:
         path: /etc/systemd/system/isolab-dagu.service
