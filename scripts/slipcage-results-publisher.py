@@ -23,16 +23,24 @@ REPO = "soybeanfarmer/slipcage-smol"
 API = "https://api.github.com/repos/" + REPO
 SOURCE = Path("/var/lib/slipcage-guest/experiment-results")
 STATE = Path("/var/lib/slipcage-results-publisher")
-RUNNER = "fixed_arithmetic_sha256_v1"
+ARITHMETIC_RUNNER = "fixed_arithmetic_sha256_v1"
+BOOT_RUNNER = "fixed_guest_boot_v1"
 RECORD = re.compile(r"(EXP-[0-9]{4})-([a-f0-9]{64})\.json\Z")
 SHA40 = re.compile(r"[a-f0-9]{40}\Z")
 SHA64 = re.compile(r"[a-f0-9]{64}\Z")
 ALLOWED = {"schema_version", "experiment_id", "approved_release_sha",
            "manifest_sha256", "runner", "status", "outcome",
            "claimed_utc", "finished_utc", "run_dir", "failure_type"}
-OUTCOMES = {"passed": {"known_answers_verified"},
-            "failed": {"missing_or_failed_fixed_guest_evidence",
-                       "runner_exception"}}
+OUTCOMES = {
+    ARITHMETIC_RUNNER: {
+        "passed": {"known_answers_verified"},
+        "failed": {"missing_or_failed_fixed_guest_evidence", "runner_exception"},
+    },
+    BOOT_RUNNER: {
+        "passed": {"guest_boot_verified"},
+        "failed": {"missing_or_failed_boot_evidence", "runner_exception"},
+    },
+}
 MAX_FILE = 8192
 MAX_SCAN = 2000
 MAX_API = 256 * 1024
@@ -64,6 +72,7 @@ def sanitize(value, filename):
     ident = value.get("experiment_id")
     rev = value.get("approved_release_sha")
     digest = value.get("manifest_sha256")
+    runner = value.get("runner")
     status = value.get("status")
     outcome = value.get("outcome")
     if (type(value.get("schema_version")) is not int
@@ -71,8 +80,9 @@ def sanitize(value, filename):
             or not isinstance(ident, str) or not re.fullmatch(r"EXP-[0-9]{4}", ident)
             or not isinstance(rev, str) or not SHA40.fullmatch(rev)
             or not isinstance(digest, str) or not SHA64.fullmatch(digest)
-            or value.get("runner") != RUNNER
-            or status not in OUTCOMES or outcome not in OUTCOMES[status]):
+            or runner not in OUTCOMES
+            or status not in OUTCOMES[runner]
+            or outcome not in OUTCOMES[runner][status]):
         raise PublishError("Unrecognized completed result")
     key = hashlib.sha256((ident + ":" + rev + ":" + digest).encode("ascii")).hexdigest()
     if matched.groups() != (ident, key):
@@ -83,7 +93,7 @@ def sanitize(value, filename):
     return {
         "schema_version": 1, "experiment_id": ident,
         "approved_release_sha": rev, "manifest_sha256": digest,
-        "runner": RUNNER, "status": status, "outcome": outcome,
+        "runner": runner, "status": status, "outcome": outcome,
         "claimed_utc": started, "finished_utc": ended,
         "evidence": "self-reported fixed guest result; requires human review",
     }

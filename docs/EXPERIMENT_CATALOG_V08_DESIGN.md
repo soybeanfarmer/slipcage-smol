@@ -1,6 +1,6 @@
 # v0.8 experiment catalog — design for review
 
-Status: **proposal only**. This document does not authorize deployment or unattended execution.
+Status: **accepted design; implementation remains review-gated**. This document does not authorize deployment or unattended execution.
 
 ## Existing trusted components (v0.7.0)
 

@@ -26,7 +26,17 @@ STATE = Path("/var/lib/slipcage-guest")
 DRIVER = Path("/usr/local/lib/slipcage/guest-lifecycle.py")
 EXPERIMENT_ID = re.compile(r"EXP-[0-9]{4}\Z")
 COMMIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
-ALLOWED_RUNNER = "fixed_arithmetic_sha256_v1"
+ARITHMETIC_RUNNER = "fixed_arithmetic_sha256_v1"
+BOOT_RUNNER = "fixed_guest_boot_v1"
+ALLOWED_RUNNERS = frozenset((ARITHMETIC_RUNNER, BOOT_RUNNER))
+PASS_OUTCOMES = {
+    ARITHMETIC_RUNNER: "known_answers_verified",
+    BOOT_RUNNER: "guest_boot_verified",
+}
+FAIL_OUTCOMES = {
+    ARITHMETIC_RUNNER: "missing_or_failed_fixed_guest_evidence",
+    BOOT_RUNNER: "missing_or_failed_boot_evidence",
+}
 FIELDS = {"schema_version", "id", "status", "runner", "cycles"}
 MAX_MANIFESTS = 500
 MAX_MANIFEST_BYTES = 4096
@@ -70,7 +80,7 @@ def read_manifest(path: Path, *, owner: int = 0) -> tuple[dict, str]:
             or not EXPERIMENT_ID.fullmatch(item["id"])
             or path.name != item["id"] + ".json"
             or item["status"] != "approved"
-            or item["runner"] != ALLOWED_RUNNER
+            or item["runner"] not in ALLOWED_RUNNERS
             or type(item["cycles"]) is not int or item["cycles"] != 1):
         raise ValueError("Experiment is not a supported, approved fixed workload")
     return item, hashlib.sha256(raw).hexdigest()
@@ -130,13 +140,53 @@ def prior_claims(directory: Path, *, owner: int) -> set[tuple[str, str]]:
     return seen
 
 
-def fixed_guest_runner() -> dict:
-    """Always invoke the installed fixed controller: no manifest-driven code."""
+def fixed_guest_runner(runner_name: str) -> dict:
+    """Map an allowlisted runner name to one hardcoded lifecycle profile."""
+    if runner_name == ARITHMETIC_RUNNER:
+        profile = "experiment"
+    elif runner_name == BOOT_RUNNER:
+        profile = "boot"
+    else:
+        raise ValueError("Unsupported approved runner")
     loader = SourceFileLoader("slipcage_fixed_guest", str(DRIVER))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.run_lifecycle(1, profile="experiment")
+    return module.run_lifecycle(1, profile=profile)
+
+
+def validate_evidence(runner_name: str, evidence: object) -> tuple[bool, str]:
+    """Validate only fixed runner-specific summary fields."""
+    if runner_name not in ALLOWED_RUNNERS:
+        raise ValueError("Unsupported approved runner")
+    failure = FAIL_OUTCOMES[runner_name]
+    if not isinstance(evidence, dict):
+        return False, failure
+    cycles = evidence.get("cycles")
+    common = (
+        evidence.get("requested_cycles") == 1
+        and evidence.get("completed_cycles") == 1
+        and evidence.get("successful_cycles") == 1
+        and evidence.get("passed") is True
+        and evidence.get("network") == "disabled"
+        and evidence.get("persistent_guest_disk") is False
+        and isinstance(cycles, list)
+        and len(cycles) == 1
+        and isinstance(cycles[0], dict)
+        and cycles[0].get("passed") is True
+        and cycles[0].get("supervisor_exit_code") == 0
+        and cycles[0].get("probe_exit_code") == 0
+    )
+    if not common:
+        return False, failure
+    if runner_name == ARITHMETIC_RUNNER:
+        valid = (
+            evidence.get("mode") == ARITHMETIC_RUNNER
+            and cycles[0].get("known_answers_verified") is True
+        )
+    else:
+        valid = evidence.get("mode") == "benign_diskless_guest_lifecycle"
+    return valid, PASS_OUTCOMES[runner_name] if valid else failure
 
 
 def publish_json(destination: Path, value: dict) -> None:
@@ -215,31 +265,20 @@ def consume(*, queue: Path = QUEUE, revision_file: Path = REVISION,
                 "experiment_id": definition["id"],
                 "approved_release_sha": revision,
                 "manifest_sha256": digest,
-                "runner": ALLOWED_RUNNER,
+                "runner": definition["runner"],
                 "claimed_utc": start,
             }
             if not claim(destination, {**base, "status": "claimed"}):
                 # Preserve incomplete claims for review; never automatically retry.
                 continue
             try:
-                evidence = (runner if runner is not None else fixed_guest_runner)()
-                valid = (isinstance(evidence, dict)
-                         and evidence.get("mode") == ALLOWED_RUNNER
-                         and evidence.get("requested_cycles") == 1
-                         and evidence.get("completed_cycles") == 1
-                         and evidence.get("successful_cycles") == 1
-                         and evidence.get("passed") is True
-                         and evidence.get("network") == "disabled"
-                         and evidence.get("persistent_guest_disk") is False
-                         and isinstance(evidence.get("cycles"), list)
-                         and len(evidence["cycles"]) == 1
-                         and isinstance(evidence["cycles"][0], dict)
-                         and evidence["cycles"][0].get("passed") is True
-                         and evidence["cycles"][0].get("known_answers_verified") is True)
+                evidence = (runner if runner is not None else fixed_guest_runner)(
+                    definition["runner"]
+                )
+                valid, outcome = validate_evidence(definition["runner"], evidence)
                 result = {**base, "status": "passed" if valid else "failed",
                           "finished_utc": utc_now(),
-                          "outcome": "known_answers_verified" if valid
-                          else "missing_or_failed_fixed_guest_evidence",
+                          "outcome": outcome,
                           "run_dir": (str(evidence.get("run_dir", ""))[:500]
                                       if isinstance(evidence, dict) else None)}
             except Exception as exc:

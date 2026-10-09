@@ -25,16 +25,22 @@ NEW_TREE_SHA = "d" * 40
 COMMIT_SHA = "e" * 40
 
 
-def original_result(status="passed", outcome=None):
+def original_result(status="passed", outcome=None, runner="fixed_arithmetic_sha256_v1"):
+    if outcome is None:
+        if runner == "fixed_guest_boot_v1":
+            outcome = ("guest_boot_verified" if status == "passed"
+                       else "missing_or_failed_boot_evidence")
+        else:
+            outcome = ("known_answers_verified" if status == "passed"
+                       else "missing_or_failed_fixed_guest_evidence")
     return {
         "schema_version": 1,
         "experiment_id": "EXP-0001",
         "approved_release_sha": RELEASE,
         "manifest_sha256": MANIFEST,
-        "runner": "fixed_arithmetic_sha256_v1",
+        "runner": runner,
         "status": status,
-        "outcome": outcome or ("known_answers_verified" if status == "passed"
-                              else "missing_or_failed_fixed_guest_evidence"),
+        "outcome": outcome,
         "claimed_utc": "2026-10-09T16:09:47+00:00",
         "finished_utc": "2026-10-09T16:09:50+00:00",
         "run_dir": "/var/lib/slipcage-guest/runs/PRIVATE-HOST-PATH",
@@ -138,6 +144,19 @@ class PublisherTests(unittest.TestCase):
         self.assertNotIn("SecretFailureType", serialized)
         self.assertLess(len(serialized), 2048)
         self.assertEqual(self.invoke()["status"], "dry_run")
+
+    def test_boot_result_is_allowlisted_with_runner_specific_outcome(self):
+        record = original_result(runner="fixed_guest_boot_v1")
+        output = publisher.sanitize(record, filename(record))
+        self.assertEqual(output["runner"], "fixed_guest_boot_v1")
+        self.assertEqual(output["status"], "passed")
+        self.assertEqual(output["outcome"], "guest_boot_verified")
+        self.assertNotIn("run_dir", output)
+        self.assertNotIn("failure_type", output)
+
+        wrong = {**record, "outcome": "known_answers_verified"}
+        with self.assertRaises(publisher.PublishError):
+            publisher.sanitize(wrong, filename(wrong))
 
     def test_dry_run_never_loads_a_credential_or_contacts_api(self):
         with patch.object(publisher, "credential",
