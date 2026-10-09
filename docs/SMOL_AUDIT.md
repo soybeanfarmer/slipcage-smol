@@ -81,13 +81,14 @@ It is **not part** of advisory discovery or normal scheduled operations.
 
 ## Risks identified
 
-1. **Original-repo deployment coupling (highest priority).**
-   `scripts/pull-deploy.sh` still declares
-   `REPO="soybeanfarmer/slipcage"`, expects that repo's
-   release ancestry and runs Ansible against the existing server
-   layout. The smol repo must **not** simply be bootstrapped onto
-   the same running production VPS; treat redirecting the deployment
-   channel as a separate, reviewed migration project.
+1. **Independent release origin, but no same-host migration.**
+   The follow-up smol deployment-isolation PR points
+   `scripts/pull-deploy.sh` at the smol repository and requires
+   a private smol bootstrap marker before polling or Ansible writes.
+   Original and smol hosts still use historical service/data paths;
+   the original production VPS must **never** be directly
+   bootstrapped from smol. A migration is not included. See
+   [SMOL_DEPLOYMENT.md](SMOL_DEPLOYMENT.md).
 2. **Misleading landing page.** The historical README starts
    at "starter v0.1" and calls released capabilities "proposals".
    It also promotes optional future security/fuzzing work that is
@@ -122,11 +123,11 @@ Replace the historical README with a current-state summary;
 record the component map and permanent project scope.
 No code, tests, schemas, units, flags, or deploy targets change.
 
-**PR 2:** Review and design smol release/deployment isolation.
-Prove a clean repository origin and release/CI verification process
-on a **separate sandbox**, or explicitly decide to keep smol
-source-only. Do not repoint the original VPS or silently
-reuse `/var/lib/slipcage`/database paths.
+**PR 2 (this follow-up PR):** Configure a distinct smol
+release origin and fail-closed **fresh-host-only** bootstrap gate.
+The existing server stays unchanged. Validate actual installation
+only later on a separate operator-approved disposable sandbox
+before calling independent production readiness proven.
 
 **PR 3:** Reduce optional installation only after review.
 Candidates: never-used offsite-backup files and the unconfigured
