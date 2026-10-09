@@ -34,10 +34,12 @@ exploit reproduction, fuzzers, hypervisor escapes or network scans.
 Advisory descriptions and URLs are treated as **untrusted data**, not
 commands or proof that a vulnerability exists.
 
-Optional HTTPS notification and encrypted off-server backup components
-are present from v0.10 **but disabled**. No webhook endpoint or off-server
-backup destination is configured. Encrypted off-server backups remain
-explicitly deferred.
+Optional HTTPS health notification tooling is present from v0.10,
+**but disabled** until an operator approves and configures a compatible
+endpoint. The unused Restic/off-server-backup integration has been
+**removed from smol**; encrypted off-server disaster recovery remains
+unconfigured and is not claimed by this project. Daily local backups
+and weekly scratch restores are unchanged.
 
 ## Where the code lives
 
