@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "id": "EXP-0002",
+  "status": "approved",
+  "runner": "fixed_guest_boot_v1",
+  "cycles": 1
+}
