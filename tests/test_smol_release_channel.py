@@ -29,6 +29,8 @@ class SmolChannelTests(unittest.TestCase):
             self.root / "units" / "isolab-dagu.service",
         ]
         self.marker = self.blockers[0] / "release-channel"
+        # Production already has /etc; provide its equivalent in the test fixture.
+        self.marker.parent.parent.mkdir(parents=True, exist_ok=True)
 
     def test_pristine_host_passes_without_mutation(self):
         channel.require_pristine(self.blockers)
