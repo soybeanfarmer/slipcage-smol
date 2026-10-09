@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Weekly bounded, local-only SQLite/report backup restore assurance.
+"""Weekly bounded, local-only report and legacy archive restore assurance.
 
-Restores only to a disposable dedicated cache directory. No writes to the
-live research database, reports or backup source; no offsite transport.
+Restores only to disposable scratch. Never changes live data.
 """
 from __future__ import annotations
 
@@ -24,7 +23,7 @@ import tempfile
 BACKUPS = Path("/var/backups/slipcage")
 SCRATCH = Path("/var/cache/slipcage-assurance")
 STATUS_DIR = Path("/var/lib/slipcage-assurance")
-BACKUP_NAME = re.compile(r"^backup-\d{8}T\d{12}Z$")
+BACKUP_NAME = re.compile(r"^(?:backup|reports)-\d{8}T\d{12}Z$")
 MAX_DB_BYTES = 256 * 1024 * 1024
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 MIN_FREE_MARGIN = 2 * 1024 * 1024 * 1024
@@ -37,7 +36,7 @@ def backup_latest(root: Path) -> Path:
     names = [p for p in root.iterdir() if BACKUP_NAME.fullmatch(p.name)]
     if len(names) > MAX_BACKUPS_TO_SCAN:
         raise ValueError("Too many backup candidates")
-    for candidate in sorted(names, key=lambda p: p.name, reverse=True):
+    for candidate in sorted(names, key=lambda p: p.name.split("-", 1)[1], reverse=True):
         if not candidate.is_symlink() and candidate.is_dir():
             return candidate
     raise ValueError("No completed local backup found")
@@ -87,7 +86,11 @@ def check(*, backups: Path = BACKUPS, scratch: Path = SCRATCH,
         source = None
         try:
             source = backup_latest(backups)
-            db_bytes = regular_size(source / "research.sqlite3", MAX_DB_BYTES)
+            manifest = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
+            if manifest.get("format") not in (1, 2):
+                raise ValueError("Unsupported backup format")
+            db_bytes = (regular_size(source / "research.sqlite3", MAX_DB_BYTES)
+                        if manifest["format"] == 1 else 0)
             archive_bytes = regular_size(source / "reports.tar.gz", MAX_ARCHIVE_BYTES)
             regular_size(source / "manifest.json", 64 * 1024)
             required = MIN_FREE_MARGIN + 2 * (db_bytes + archive_bytes)

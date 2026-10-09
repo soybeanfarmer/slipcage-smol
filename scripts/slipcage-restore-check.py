@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Restore drill: reconstruct a validated backup into a NEW private directory.
+"""Restore a verified format-2 report archive or legacy format-1 DB/reports into scratch.
 
-Never modifies the live database or reports and never extracts tar entries
-directly using tarfile.extract. Use only with trusted root-owned backup paths.
+Never writes live data; refuses links and path traversal.
 """
 from __future__ import annotations
 
@@ -39,12 +38,13 @@ def drill(source: Path, destination: Path) -> dict:
     staging = Path(tempfile.mkdtemp(dir=parent, prefix=".restore-drill-"))
     os.chmod(staging, 0o700)
     try:
-        restored_db = staging / "research.sqlite3"
-        # SQLite copy is safe because the backup is a complete, closed snapshot.
-        with (source / "research.sqlite3").open("rb") as reader:
-            with restored_db.open("xb") as writer:
-                shutil.copyfileobj(reader, writer)
-        os.chmod(restored_db, 0o600)
+        if original["format"] == 1:
+            restored_db = staging / "research.sqlite3"
+            # Legacy database copy is closed/verified by backup.verify_backup.
+            with (source / "research.sqlite3").open("rb") as reader:
+                with restored_db.open("xb") as writer:
+                    shutil.copyfileobj(reader, writer)
+            os.chmod(restored_db, 0o600)
         reports = staging / "reports"
         reports.mkdir(mode=0o700)
         with tarfile.open(source / "reports.tar.gz", "r:gz") as archive:
@@ -63,14 +63,19 @@ def drill(source: Path, destination: Path) -> dict:
                     with (reports / rel.parts[1]).open("xb") as out:
                         shutil.copyfileobj(reader, out)
                 os.chmod(reports / rel.parts[1], 0o600)
-        count = backup.check_sqlite(restored_db)
         report_count = len(list(reports.iterdir()))
-        if count != original["candidates"] or report_count != original["reports"]:
-            raise ValueError("Restored contents do not match verified backup")
+        if report_count != original["reports"]:
+            raise ValueError("Restored reports do not match verified backup")
+        result = {"verified": True, "restored_to": str(destination),
+                  "reports": report_count, "format": original["format"],
+                  "live_data_modified": False}
+        if original["format"] == 1:
+            count = backup.check_sqlite(restored_db)
+            if count != original["candidates"]:
+                raise ValueError("Restored legacy SQLite count differs")
+            result["candidates"] = count
         os.replace(staging, destination)
-        return {"verified": True, "restored_to": str(destination),
-                "candidates": count, "reports": report_count,
-                "live_data_modified": False}
+        return result
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
