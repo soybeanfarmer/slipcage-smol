@@ -404,6 +404,9 @@ class ExperimentConsumerTests(unittest.TestCase):
                       "StateDirectory=slipcage-guest",
                       "MemoryMax=1280M", "CPUQuota=100%", "TasksMax=64",
                       "DevicePolicy=closed", "DeviceAllow=/dev/kvm rw",
+                      "ConditionPathExists=/usr/local/lib/slipcage/microguest.cpio.gz",
+                      "ConditionPathExists=/usr/local/lib/slipcage/experiment-v1.cpio.gz",
+                      "ConditionPathExists=/usr/local/lib/slipcage/resource-v1.cpio.gz",
                       "TimeoutStartSec=5min", "slipcage-guard run"):
             self.assertIn(field, service)
         self.assertNotIn("WantedBy=", service)
