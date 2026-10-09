@@ -12,6 +12,7 @@ import fcntl
 import hashlib
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -28,14 +29,22 @@ EXPERIMENT_ID = re.compile(r"EXP-[0-9]{4}\Z")
 COMMIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
 ARITHMETIC_RUNNER = "fixed_arithmetic_sha256_v1"
 BOOT_RUNNER = "fixed_guest_boot_v1"
-ALLOWED_RUNNERS = frozenset((ARITHMETIC_RUNNER, BOOT_RUNNER))
+RESOURCE_RUNNER = "fixed_resource_observation_v1"
+ALLOWED_RUNNERS = frozenset((ARITHMETIC_RUNNER, BOOT_RUNNER, RESOURCE_RUNNER))
+RESOURCE_MAX_WALL_SECONDS = 60.0
+RESOURCE_MAX_CPU_SECONDS = 60.0
+RESOURCE_MAX_RSS_KIB = 768 * 1024
+RESOURCE_KEYS = ("wall_seconds", "cpu_user_seconds",
+                 "cpu_system_seconds", "qemu_peak_rss_kib")
 PASS_OUTCOMES = {
     ARITHMETIC_RUNNER: "known_answers_verified",
     BOOT_RUNNER: "guest_boot_verified",
+    RESOURCE_RUNNER: "resource_bounds_verified",
 }
 FAIL_OUTCOMES = {
     ARITHMETIC_RUNNER: "missing_or_failed_fixed_guest_evidence",
     BOOT_RUNNER: "missing_or_failed_boot_evidence",
+    RESOURCE_RUNNER: "missing_or_failed_resource_evidence",
 }
 FIELDS = {"schema_version", "id", "status", "runner", "cycles"}
 MAX_MANIFESTS = 500
@@ -146,6 +155,8 @@ def fixed_guest_runner(runner_name: str) -> dict:
         profile = "experiment"
     elif runner_name == BOOT_RUNNER:
         profile = "boot"
+    elif runner_name == RESOURCE_RUNNER:
+        profile = "resource"
     else:
         raise ValueError("Unsupported approved runner")
     loader = SourceFileLoader("slipcage_fixed_guest", str(DRIVER))
@@ -184,8 +195,32 @@ def validate_evidence(runner_name: str, evidence: object) -> tuple[bool, str]:
             evidence.get("mode") == ARITHMETIC_RUNNER
             and cycles[0].get("known_answers_verified") is True
         )
-    else:
+    elif runner_name == BOOT_RUNNER:
         valid = evidence.get("mode") == "benign_diskless_guest_lifecycle"
+    else:
+        resources = cycles[0].get("qemu_resources")
+        resource_values_ok = (
+            isinstance(resources, dict)
+            and set(resources) == set(RESOURCE_KEYS)
+            and all(
+                type(resources.get(key)) in (int, float)
+                and not isinstance(resources.get(key), bool)
+                and math.isfinite(resources[key])
+                and resources[key] >= 0
+                for key in RESOURCE_KEYS
+            )
+        )
+        valid = (
+            evidence.get("mode") == RESOURCE_RUNNER
+            and cycles[0].get("known_answers_verified") is True
+            and cycles[0].get("resource_bounds_verified") is True
+            and resource_values_ok
+            and resources["wall_seconds"] <= RESOURCE_MAX_WALL_SECONDS
+            and resources["cpu_user_seconds"] + resources["cpu_system_seconds"]
+                <= RESOURCE_MAX_CPU_SECONDS
+            and type(resources["qemu_peak_rss_kib"]) is int
+            and resources["qemu_peak_rss_kib"] <= RESOURCE_MAX_RSS_KIB
+        )
     return valid, PASS_OUTCOMES[runner_name] if valid else failure
 
 
@@ -281,6 +316,11 @@ def consume(*, queue: Path = QUEUE, revision_file: Path = REVISION,
                           "outcome": outcome,
                           "run_dir": (str(evidence.get("run_dir", ""))[:500]
                                       if isinstance(evidence, dict) else None)}
+                if valid and definition["runner"] == RESOURCE_RUNNER:
+                    resources = evidence["cycles"][0]["qemu_resources"]
+                    result["resource_observation"] = {
+                        key: resources[key] for key in RESOURCE_KEYS
+                    }
             except Exception as exc:
                 # Never include arbitrary exception messages or console logs.
                 result = {**base, "status": "failed", "finished_utc": utc_now(),

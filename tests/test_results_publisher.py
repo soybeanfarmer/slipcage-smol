@@ -30,10 +30,13 @@ def original_result(status="passed", outcome=None, runner="fixed_arithmetic_sha2
         if runner == "fixed_guest_boot_v1":
             outcome = ("guest_boot_verified" if status == "passed"
                        else "missing_or_failed_boot_evidence")
+        elif runner == "fixed_resource_observation_v1":
+            outcome = ("resource_bounds_verified" if status == "passed"
+                       else "missing_or_failed_resource_evidence")
         else:
             outcome = ("known_answers_verified" if status == "passed"
                        else "missing_or_failed_fixed_guest_evidence")
-    return {
+    record = {
         "schema_version": 1,
         "experiment_id": "EXP-0001",
         "approved_release_sha": RELEASE,
@@ -46,6 +49,14 @@ def original_result(status="passed", outcome=None, runner="fixed_arithmetic_sha2
         "run_dir": "/var/lib/slipcage-guest/runs/PRIVATE-HOST-PATH",
         "failure_type": "SecretFailureType",
     }
+    if runner == "fixed_resource_observation_v1" and status == "passed":
+        record["resource_observation"] = {
+            "wall_seconds": 2.5,
+            "cpu_user_seconds": 0.7,
+            "cpu_system_seconds": 0.3,
+            "qemu_peak_rss_kib": 420000,
+        }
+    return record
 
 
 def filename(record):
@@ -157,6 +168,37 @@ class PublisherTests(unittest.TestCase):
         wrong = {**record, "outcome": "known_answers_verified"}
         with self.assertRaises(publisher.PublishError):
             publisher.sanitize(wrong, filename(wrong))
+
+    def test_resource_result_publishes_only_bounded_numeric_observation(self):
+        record = original_result(runner="fixed_resource_observation_v1")
+        output = publisher.sanitize(record, filename(record))
+        self.assertEqual(output["runner"], "fixed_resource_observation_v1")
+        self.assertEqual(output["outcome"], "resource_bounds_verified")
+        self.assertEqual(output["resource_observation"], {
+            "wall_seconds": 2.5,
+            "cpu_user_seconds": 0.7,
+            "cpu_system_seconds": 0.3,
+            "qemu_peak_rss_kib": 420000,
+        })
+        self.assertNotIn("run_dir", output)
+        self.assertNotIn("failure_type", output)
+
+        for change in (
+            {"wall_seconds": 60.001},
+            {"cpu_user_seconds": 60.0, "cpu_system_seconds": 0.001},
+            {"qemu_peak_rss_kib": 768 * 1024 + 1},
+            {"wall_seconds": float("nan")},
+        ):
+            changed = json.loads(json.dumps(record))
+            changed["resource_observation"].update(change)
+            with self.subTest(change=change):
+                with self.assertRaises(publisher.PublishError):
+                    publisher.sanitize(changed, filename(changed))
+
+        injected = original_result()
+        injected["resource_observation"] = record["resource_observation"]
+        with self.assertRaises(publisher.PublishError):
+            publisher.sanitize(injected, filename(injected))
 
     def test_dry_run_never_loads_a_credential_or_contacts_api(self):
         with patch.object(publisher, "credential",

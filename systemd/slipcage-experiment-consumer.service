@@ -2,7 +2,9 @@
 Description=Consume one reviewed fixed Slipcage experiment from approved release
 After=local-fs.target
 ConditionPathExists=/dev/kvm
+ConditionPathExists=/usr/local/lib/slipcage/microguest.cpio.gz
 ConditionPathExists=/usr/local/lib/slipcage/experiment-v1.cpio.gz
+ConditionPathExists=/usr/local/lib/slipcage/resource-v1.cpio.gz
 ConditionPathExists=/var/lib/slipcage/deployed-sha
 
 [Service]

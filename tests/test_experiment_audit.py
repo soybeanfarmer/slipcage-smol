@@ -47,13 +47,16 @@ class AuditTests(unittest.TestCase):
     def cycle(*, profile, **_):
         if profile == "boot":
             return {"passed": True, "seconds": 1.0}, "guest boot complete\n"
-        return ({
+        result = {
             "passed": True, "seconds": 1.4, "known_answers_verified": True,
             "qemu_resources": {
                 "wall_seconds": 1.2, "cpu_user_seconds": 0.9,
                 "cpu_system_seconds": 0.2, "qemu_peak_rss_kib": 10000,
             },
-        }, "fixed known answer\n")
+        }
+        if profile == "resource":
+            result["resource_bounds_verified"] = True
+        return result, "fixed known answer\n"
 
     def completed(self, *, profile="experiment", cycles=2):
         return lifecycle.run_lifecycle(
@@ -76,6 +79,16 @@ class AuditTests(unittest.TestCase):
                          audit.render_markdown(audit.audit(self.state)))
         self.assertIn("complete_pass", audit.render_markdown(result))
         self.assertEqual((Path(recorded["run_dir"]) / "run.json").stat().st_mode & 0o777, 0o600)
+
+    def test_resource_observation_run_is_audited_with_measurements(self):
+        recorded = self.completed(profile="resource", cycles=1)
+        entry = audit.audit(self.state)["runs"][0]
+        self.assertEqual(entry["status"], "complete_pass")
+        self.assertEqual(entry["mode"], "fixed_resource_observation_v1")
+        self.assertEqual(entry["resource_statistics"]["qemu_wall_mean_seconds"], 1.2)
+        self.assertEqual(entry["resource_statistics"]["qemu_peak_rss_max_kib"], 10000)
+        header = json.loads((Path(recorded["run_dir"]) / "run.json").read_text())
+        self.assertEqual(header["profile"], "resource")
 
     def test_boot_only_run_from_existing_version_remains_supported(self):
         result = self.completed(profile="boot", cycles=2)

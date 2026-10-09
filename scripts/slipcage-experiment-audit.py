@@ -24,7 +24,16 @@ RUN_NAME = re.compile(r"^run-\d{8}T\d{12}Z-[a-zA-Z0-9_]+$")
 MAX_RECORD_BYTES = 64 * 1024
 MAX_LOG_BYTES = 64 * 1024
 MAX_RUNS = 20
-MODES = ("fixed_arithmetic_sha256_v1", "benign_diskless_guest_lifecycle")
+MODES = (
+    "fixed_arithmetic_sha256_v1",
+    "benign_diskless_guest_lifecycle",
+    "fixed_resource_observation_v1",
+)
+PROFILE_FOR_MODE = {
+    "fixed_arithmetic_sha256_v1": "experiment",
+    "benign_diskless_guest_lifecycle": "boot",
+    "fixed_resource_observation_v1": "resource",
+}
 
 
 class EvidenceError(Exception):
@@ -90,7 +99,8 @@ def audit_run(directory: Path, *, lock_held: bool = False) -> dict:
             header, digest = read_json(manifest)
             report["manifest_present"] = True
             report["artifacts"].append({"name": "run.json", "sha256": digest})
-            if header.get("schema_version") != 1 or header.get("profile") not in ("boot", "experiment"):
+            if (header.get("schema_version") != 1
+                    or header.get("profile") not in tuple(PROFILE_FOR_MODE.values())):
                 report["issues"].append("invalid_run_manifest")
         except EvidenceError:
             report["issues"].append("invalid_run_manifest")
@@ -115,7 +125,7 @@ def audit_run(directory: Path, *, lock_held: bool = False) -> dict:
     successes = summary.get("successful_cycles")
     cycles = summary.get("cycles")
     if (mode not in MODES or type(requested) is not int or not 1 <= requested <= 5
-            or (mode == MODES[0] and requested > 3)
+            or (mode in (MODES[0], MODES[2]) and requested > 3)
             or type(completed) is not int or not 1 <= completed <= requested
             or type(successes) is not int or not 0 <= successes <= completed
             or type(summary.get("passed")) is not bool
@@ -132,8 +142,8 @@ def audit_run(directory: Path, *, lock_held: bool = False) -> dict:
     })
     if report["manifest_present"] and not report["issues"]:
         header, _ = read_json(manifest)
-        if header.get("requested_cycles") != requested or (
-            header.get("profile") == "experiment") != (mode == MODES[0]):
+        if (header.get("requested_cycles") != requested
+                or header.get("profile") != PROFILE_FOR_MODE.get(mode)):
             report["issues"].append("manifest_summary_mismatch")
 
     measured = []
@@ -159,13 +169,16 @@ def audit_run(directory: Path, *, lock_held: bool = False) -> dict:
             continue
         if cycle["passed"]:
             passed_count += 1
-        if mode == MODES[0] and cycle["passed"]:
+        if mode in (MODES[0], MODES[2]) and cycle["passed"]:
             resources = cycle.get("qemu_resources")
             if not isinstance(resources, dict) or not all(
                 numeric(resources.get(key)) for key in
                 ("wall_seconds", "cpu_user_seconds", "cpu_system_seconds", "qemu_peak_rss_kib")
             ) or cycle.get("known_answers_verified") is not True:
                 report["issues"].append(f"invalid_cycle_{index:02}_measurement")
+                continue
+            if mode == MODES[2] and cycle.get("resource_bounds_verified") is not True:
+                report["issues"].append(f"invalid_cycle_{index:02}_resource_bounds")
                 continue
             measured.append(resources)
     if passed_count != successes:

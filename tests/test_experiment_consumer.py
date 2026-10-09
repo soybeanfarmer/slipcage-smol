@@ -27,6 +27,9 @@ APPROVED = {
 BOOT_APPROVED = {
     **APPROVED, "id": "EXP-0002", "runner": "fixed_guest_boot_v1",
 }
+RESOURCE_APPROVED = {
+    **APPROVED, "id": "EXP-0003", "runner": "fixed_resource_observation_v1",
+}
 
 
 def passed_evidence(runner_name="fixed_arithmetic_sha256_v1"):
@@ -38,6 +41,16 @@ def passed_evidence(runner_name="fixed_arithmetic_sha256_v1"):
         cycle["known_answers_verified"] = True
     elif runner_name == "fixed_guest_boot_v1":
         mode = "benign_diskless_guest_lifecycle"
+    elif runner_name == "fixed_resource_observation_v1":
+        mode = "fixed_resource_observation_v1"
+        cycle["known_answers_verified"] = True
+        cycle["resource_bounds_verified"] = True
+        cycle["qemu_resources"] = {
+            "wall_seconds": 2.5,
+            "cpu_user_seconds": 0.7,
+            "cpu_system_seconds": 0.3,
+            "qemu_peak_rss_kib": 420000,
+        }
     else:
         raise AssertionError("unexpected runner fixture")
     return {
@@ -158,7 +171,9 @@ class ExperimentConsumerTests(unittest.TestCase):
 
     def test_mixed_runner_queue_is_ordered_and_dispatches_exact_names(self):
         second = self.queue / "EXP-0002.json"
+        third = self.queue / "EXP-0003.json"
         second.write_text(json.dumps(BOOT_APPROVED))
+        third.write_text(json.dumps(RESOURCE_APPROVED))
         seen = []
 
         def dispatch(runner_name):
@@ -167,12 +182,21 @@ class ExperimentConsumerTests(unittest.TestCase):
 
         first = self.run_once(runner=dispatch)
         later = self.run_once(runner=dispatch)
+        resource = self.run_once(runner=dispatch)
         self.assertEqual(first["experiment_id"], "EXP-0001")
         self.assertEqual(first["outcome"], "known_answers_verified")
         self.assertEqual(later["experiment_id"], "EXP-0002")
         self.assertEqual(later["runner"], "fixed_guest_boot_v1")
         self.assertEqual(later["outcome"], "guest_boot_verified")
-        self.assertEqual(seen, ["fixed_arithmetic_sha256_v1", "fixed_guest_boot_v1"])
+        self.assertEqual(resource["experiment_id"], "EXP-0003")
+        self.assertEqual(resource["runner"], "fixed_resource_observation_v1")
+        self.assertEqual(resource["outcome"], "resource_bounds_verified")
+        self.assertEqual(resource["resource_observation"]["qemu_peak_rss_kib"], 420000)
+        self.assertEqual(seen, [
+            "fixed_arithmetic_sha256_v1",
+            "fixed_guest_boot_v1",
+            "fixed_resource_observation_v1",
+        ])
         self.assertEqual(self.run_once(runner=dispatch)["status"], "idle")
 
     def test_runner_names_map_only_to_hardcoded_lifecycle_profiles(self):
@@ -184,10 +208,12 @@ class ExperimentConsumerTests(unittest.TestCase):
         with patch.object(consumer, "DRIVER", driver):
             arithmetic = consumer.fixed_guest_runner("fixed_arithmetic_sha256_v1")
             boot = consumer.fixed_guest_runner("fixed_guest_boot_v1")
+            resource = consumer.fixed_guest_runner("fixed_resource_observation_v1")
             with self.assertRaises(ValueError):
                 consumer.fixed_guest_runner("arbitrary_runner")
         self.assertEqual(arithmetic, {"cycles": 1, "profile": "experiment"})
         self.assertEqual(boot, {"cycles": 1, "profile": "boot"})
+        self.assertEqual(resource, {"cycles": 1, "profile": "resource"})
 
     def test_boot_evidence_fails_closed_on_forged_success_invariants(self):
         base = passed_evidence("fixed_guest_boot_v1")
@@ -222,6 +248,43 @@ class ExperimentConsumerTests(unittest.TestCase):
                 )
                 self.assertFalse(valid)
                 self.assertEqual(outcome, "missing_or_failed_boot_evidence")
+
+    def test_resource_evidence_requires_known_answers_and_fixed_ceilings(self):
+        base = passed_evidence("fixed_resource_observation_v1")
+        valid, outcome = consumer.validate_evidence(
+            "fixed_resource_observation_v1", base
+        )
+        self.assertTrue(valid)
+        self.assertEqual(outcome, "resource_bounds_verified")
+
+        cases = []
+        evidence = json.loads(json.dumps(base))
+        evidence["cycles"][0]["resource_bounds_verified"] = False
+        cases.append(evidence)
+        evidence = json.loads(json.dumps(base))
+        evidence["cycles"][0]["known_answers_verified"] = False
+        cases.append(evidence)
+        evidence = json.loads(json.dumps(base))
+        evidence["cycles"][0]["qemu_resources"]["wall_seconds"] = 60.001
+        cases.append(evidence)
+        evidence = json.loads(json.dumps(base))
+        evidence["cycles"][0]["qemu_resources"]["cpu_user_seconds"] = 60.0
+        evidence["cycles"][0]["qemu_resources"]["cpu_system_seconds"] = 0.001
+        cases.append(evidence)
+        evidence = json.loads(json.dumps(base))
+        evidence["cycles"][0]["qemu_resources"]["qemu_peak_rss_kib"] = 768 * 1024 + 1
+        cases.append(evidence)
+        evidence = json.loads(json.dumps(base))
+        evidence["cycles"][0]["qemu_resources"]["wall_seconds"] = float("nan")
+        cases.append(evidence)
+
+        for evidence in cases:
+            with self.subTest(evidence=evidence):
+                valid, outcome = consumer.validate_evidence(
+                    "fixed_resource_observation_v1", evidence
+                )
+                self.assertFalse(valid)
+                self.assertEqual(outcome, "missing_or_failed_resource_evidence")
 
     def test_failed_boot_is_not_retried_after_release_change(self):
         self.manifest.write_text(json.dumps({
@@ -341,6 +404,9 @@ class ExperimentConsumerTests(unittest.TestCase):
                       "StateDirectory=slipcage-guest",
                       "MemoryMax=1280M", "CPUQuota=100%", "TasksMax=64",
                       "DevicePolicy=closed", "DeviceAllow=/dev/kvm rw",
+                      "ConditionPathExists=/usr/local/lib/slipcage/microguest.cpio.gz",
+                      "ConditionPathExists=/usr/local/lib/slipcage/experiment-v1.cpio.gz",
+                      "ConditionPathExists=/usr/local/lib/slipcage/resource-v1.cpio.gz",
                       "TimeoutStartSec=5min", "slipcage-guard run"):
             self.assertIn(field, service)
         self.assertNotIn("WantedBy=", service)
