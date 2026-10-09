@@ -33,6 +33,33 @@ Preserve and investigate an interrupted `claimed` record. The
 consumer's lock and the existing guest lifecycle flock prevent
 concurrent runs; the existing deployment guard drains active work.
 
+## One-time bootstrap puller transition
+
+The initial bootstrap installed the Smol release puller at
+`/usr/local/sbin/slipcage-pull-deploy`. Earlier Ansible releases updated
+the application but did **not** refresh the puller. That meant the
+v0.5.0 repository fix for the public release-SHA file's mode
+(`0644`) was not yet present in the **installed** puller. The existing
+`deployed-sha` therefore remained `0600`, which prevented the
+unprivileged consumer from reading the release identity.
+
+From this change onward, every approved release **atomically refreshes
+the installed puller** from the same validated release snapshot. The
+new puller writes a root-owned, read-only-to-others `deployed-sha`
+file. The **first** deployment made with the old puller can still
+finish by overwriting the SHA with mode `0600`, so on that transition
+the operator must run the following once (without loosening any other
+permissions):
+
+```bash
+sudo chmod 0644 /var/lib/slipcage/deployed-sha
+sudo -u slipcage-vmprobe test -r /var/lib/slipcage/deployed-sha
+```
+
+This is a public Git SHA, **not** the root-private release-channel
+marker, and does not contain credentials. Never change the permissions
+on `/etc/slipcage/release-channel` or on guest evidence directories.
+
 ## First run (manual and safe)
 
 **Do not enable unattended execution before confirming nested KVM
