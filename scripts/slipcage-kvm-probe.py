@@ -148,6 +148,15 @@ EXPERIMENT_MARKERS = (
     "SLIPCAGE_EXPERIMENT_V1_SHA256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
     "SLIPCAGE_EXPERIMENT_V1_OK",
 )
+RESOURCE_INITRD = Path("/usr/local/lib/slipcage/resource-v1.cpio.gz")
+RESOURCE_MARKERS = (
+    "SLIPCAGE_RESOURCE_V1_BYTES=33554432",
+    "SLIPCAGE_RESOURCE_V1_SHA256=83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302",
+    "SLIPCAGE_RESOURCE_V1_OK",
+)
+RESOURCE_MAX_WALL_SECONDS = 60.0
+RESOURCE_MAX_CPU_SECONDS = 60.0
+RESOURCE_MAX_RSS_KIB = 768 * 1024
 
 
 def run_experiment(*, runner=subprocess.run,
@@ -206,6 +215,78 @@ def run_experiment(*, runner=subprocess.run,
         "stderr_tail": process.stderr[-1000:] if not passed else "",
     }
 
+
+def run_resource_observation(*, runner=subprocess.run,
+                             kernel_path: Path | None = None,
+                             initrd_path: Path | None = None) -> dict:
+    """Run the fixed 32-MiB guest workload and enforce hard resource ceilings."""
+    preflight = inspect()
+    kernel = (kernel_path if kernel_path is not None
+              else Path("/usr/local/lib/slipcage") / f"vmlinuz-{os.uname().release}")
+    initrd = initrd_path if initrd_path is not None else RESOURCE_INITRD
+    if not (preflight["process_can_open_kvm"] and preflight["qemu_binary_available"]
+            and kernel.is_file() and initrd.is_file()):
+        return {
+            "resource_observation_passed": False,
+            "reason": "KVM, QEMU, kernel or resource guest unavailable",
+            "inspection": preflight,
+        }
+    args = [
+        QEMU, "-no-user-config", "-nodefaults", "-machine", "q35,accel=kvm",
+        "-cpu", "host", "-m", "384", "-smp", "1",
+        "-display", "none", "-monitor", "none", "-serial", "stdio",
+        "-nic", "none", "-no-reboot",
+        "-kernel", str(kernel), "-initrd", str(initrd),
+        "-append", "console=ttyS0 rdinit=/init panic=1 quiet",
+    ]
+    started = time.monotonic()
+    before = resource.getrusage(resource.RUSAGE_CHILDREN)
+    try:
+        process = runner(args, text=True, capture_output=True, timeout=75, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "resource_observation_passed": False, "reason": type(exc).__name__,
+            "wall_seconds": round(time.monotonic() - started, 3),
+            "inspection": preflight, "network": "disabled",
+            "persistent_guest_disk": False,
+        }
+    after = resource.getrusage(resource.RUSAGE_CHILDREN)
+    wall = max(0.0, time.monotonic() - started)
+    cpu_user = max(0.0, after.ru_utime - before.ru_utime)
+    cpu_system = max(0.0, after.ru_stime - before.ru_stime)
+    peak_rss = after.ru_maxrss
+    console_lines = {line.strip() for line in process.stdout.splitlines()}
+    missing = [marker for marker in RESOURCE_MARKERS if marker not in console_lines]
+    known_answers = not missing
+    bounds_verified = (
+        wall <= RESOURCE_MAX_WALL_SECONDS
+        and cpu_user + cpu_system <= RESOURCE_MAX_CPU_SECONDS
+        and type(peak_rss) is int and 0 <= peak_rss <= RESOURCE_MAX_RSS_KIB
+    )
+    passed = process.returncode == 0 and known_answers and bounds_verified
+    return {
+        "resource_observation_passed": passed,
+        "exit_code": process.returncode,
+        "known_answers_verified": known_answers,
+        "resource_bounds_verified": bounds_verified,
+        "missing_markers": missing,
+        "workload": "fixed_zero32m_sha256_v1",
+        "wall_seconds": round(wall, 3),
+        "cpu_user_seconds": round(cpu_user, 3),
+        "cpu_system_seconds": round(cpu_system, 3),
+        "qemu_peak_rss_kib": peak_rss,
+        "resource_limits": {
+            "wall_seconds_max": RESOURCE_MAX_WALL_SECONDS,
+            "cpu_seconds_max": RESOURCE_MAX_CPU_SECONDS,
+            "qemu_peak_rss_kib_max": RESOURCE_MAX_RSS_KIB,
+        },
+        "inspection": preflight,
+        "network": "disabled",
+        "persistent_guest_disk": False,
+        "console_tail": process.stdout[-1600:],
+        "stderr_tail": process.stderr[-1000:] if not passed else "",
+    }
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
@@ -215,13 +296,18 @@ def main(argv=None) -> int:
                       help="Boot and shut down a locally built, diskless Linux guest (manual).")
     mode.add_argument("--experiment", action="store_true",
                       help="Run only the packaged deterministic arithmetic/hash microguest (manual).")
+    mode.add_argument("--resource-observation", action="store_true",
+                      help="Run the fixed 32-MiB resource-observation microguest (manual).")
     args = parser.parse_args(argv)
-    result = (run_experiment() if args.experiment else
+    result = (run_resource_observation() if args.resource_observation else
+              run_experiment() if args.experiment else
               boot_guest() if args.boot else smoke() if args.smoke else inspect())
     print(json.dumps(result, sort_keys=True))
-    return 0 if (not args.smoke and not args.boot and not args.experiment) or (
+    return 0 if (not args.smoke and not args.boot and not args.experiment
+                 and not args.resource_observation) or (
         result.get("guest_booted") is True or result.get("kvm_initialized") is True
         or result.get("experiment_passed") is True
+        or result.get("resource_observation_passed") is True
     ) else 2
 
 
