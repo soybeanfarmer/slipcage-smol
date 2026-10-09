@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "id": "EXP-0004",
+  "status": "approved",
+  "runner": "fixed_resource_observation_v1",
+  "cycles": 1
+}
