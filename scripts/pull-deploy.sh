@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Slipcage pull deployment: only manually published GitHub releases from main.
+# Slipcage-smol pull deployment: only approved smol GitHub releases from main on a bootstrapped fresh host.
 set -euo pipefail
 umask 077
 
-REPO="soybeanfarmer/slipcage"
+REPO="soybeanfarmer/slipcage-smol"
 REMOTE="https://github.com/${REPO}.git"
 ROOT="/var/lib/slipcage"
 REPOSITORY="${ROOT}/source"
@@ -12,7 +12,9 @@ LOCK="${ROOT}/pull-update.lock"
 INVENTORY="/etc/slipcage/localhost.ini"
 
 [[ "${EUID}" -eq 0 ]] || { echo "Run as root" >&2; exit 1; }
-mkdir -p "${ROOT}"
+# Refuse to run against old Slipcage state unless smol owns this host.
+/usr/bin/python3 /usr/local/sbin/slipcage-smol-channel enrolled
+[[ -d "${ROOT}" && ! -L "${ROOT}" ]] || { echo "Missing or unsafe smol deployment state" >&2; exit 1; }
 exec 9>"${LOCK}"
 flock -n 9 || { echo "A deployment check is already running."; exit 0; }
 
