@@ -95,3 +95,11 @@ consumer → private structured result** path. The VPS does not push
 results back to GitHub yet; that requires separate permissions and
 privacy review. No general remote command runner or public logs are
 part of this change.
+
+## GitHub result PRs (opt in)
+
+A manual-only publisher can send narrowly sanitized completed experiment
+summaries to GitHub as **draft pull requests**. No GitHub credential or
+publishing timer is installed automatically; only the operator can
+configure and start it. No guest console logs or host paths are
+exported. See [reviewing and publishing results](docs/EXPERIMENT_QUEUE.md).

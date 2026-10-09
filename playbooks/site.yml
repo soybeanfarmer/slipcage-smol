@@ -486,6 +486,31 @@
         - slipcage-experiment-consumer.service
         - slipcage-experiment-consumer.timer
 
+    - name: Install vetted sanitized results publisher
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/slipcage-results-publisher.py"
+        dest: /usr/local/lib/slipcage/results-publisher.py
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Install manual-only isolated GitHub result PR service
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../systemd/slipcage-results-publisher.service"
+        dest: /etc/systemd/system/slipcage-results-publisher.service
+        owner: root
+        group: root
+        mode: '0644'
+      # No timer, enabled service, GitHub credentials, or guest work.
+
+    - name: Create private publication receipt directory
+      ansible.builtin.file:
+        path: /var/lib/slipcage-results-publisher
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
     - name: Install read-only guest evidence audit tool
       ansible.builtin.copy:
         src: "{{ playbook_dir }}/../scripts/slipcage-experiment-audit.py"

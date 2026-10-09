@@ -1,3 +1,8 @@
+> **Historical v0.10-era safety guidance below.** Current Smol uses
+> bounded manual fixed-guest experiments and an optional separate
+> sanitized GitHub result publisher. No publishing token is installed
+> automatically. See [experiment queue](docs/EXPERIMENT_QUEUE.md).
+
 # Security boundaries and approval requirements
 
 The ServaRica instance is itself a virtual machine on infrastructure owned by a hosting provider. **Nested KVM access is not permission to test the provider's hypervisor.** We must obtain clear provider authorization for disruptive fuzzing, real guest-to-host exploit reproduction, or CPU-intensive security research where terms require it.
