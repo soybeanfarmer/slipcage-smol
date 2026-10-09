@@ -54,7 +54,8 @@ scratch restores remain unchanged.
 | `docs/` | Operations, historical milestones, incident response and current smol audit |
 
 Read [**Smol scope and safety rules**](docs/SMOL_SCOPE.md) first,
-then [**the repository audit and proposed cleanup sequence**](docs/SMOL_AUDIT.md).
+then [**the repository audit and proposed cleanup sequence**](docs/SMOL_AUDIT.md)
+and the [**benign guest dependency audit**](docs/SMOL_DEPENDENCIES.md).
 For specific v0.10 operations, consult
 [backup operations](docs/BACKUPS.md),
 [controlled experiments](docs/CONTROLLED_EXPERIMENTS.md),
